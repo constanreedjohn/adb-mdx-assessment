@@ -2,7 +2,7 @@
 # Every Python command runs through `uv run`, so the locked environment is always used.
 
 .DEFAULT_GOAL := help
-.PHONY: help install dev down dev-reset test lint fmt typecheck migrate api sim smoke-llm
+.PHONY: help install dev down dev-reset test lint fmt typecheck migrate migration api sim smoke-llm
 
 UV ?= uv
 
@@ -44,8 +44,12 @@ fmt: ## Auto-format and apply safe lint fixes
 typecheck: ## Type-check only (mypy --strict on src/)
 	$(UV) run mypy
 
-migrate: ## Apply database migrations [E4-01]
-	@echo "Not available yet: added in E4-01 (Alembic)." && exit 1
+migrate: ## Apply database migrations (Alembic upgrade head)
+	$(UV) run alembic upgrade head
+
+migration: ## Create a migration from model changes, e.g. make migration MSG="add decisions"
+	@test -n "$(MSG)" || (echo "Usage: make migration MSG=\"what changed\"" && exit 1)
+	$(UV) run alembic revision --autogenerate -m "$(MSG)"
 
 API_PORT ?= 8000
 
