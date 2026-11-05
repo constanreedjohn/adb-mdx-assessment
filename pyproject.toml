@@ -1,0 +1,87 @@
+[project]
+name = "mdx-assessment"
+version = "0.1.0"
+description = "MDX Daily Validation Agent: supervised multi-agent exception assessment (PoC)"
+requires-python = ">=3.12,<3.13"
+# Majors are capped: the code is written against these APIs (mcp 2, openai 3, langfuse 5).
+dependencies = [
+    "alembic>=1.14,<2",
+    "azure-identity>=1.19,<2",
+    "fastapi>=0.115",
+    "langfuse>=5.1,<6",
+    "mcp>=2.3,<3",
+    "openai>=3.46,<4",
+    "psycopg[binary]>=3.2,<4",
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.6,<3",
+    "pyyaml>=6.0,<7",
+    "sqlalchemy>=2.0,<3",
+    "uvicorn[standard]>=0.32",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27",
+    "mypy>=2.4.1",
+    "pre-commit>=4.7.0",
+    "pytest>=8.3",
+    "ruff>=0.17.3",
+    "types-pyyaml>=6.0.12.20261103",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mdx_assessment"]
+
+# --- pytest -------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --import-mode=importlib"
+markers = [
+    "db: needs PostgreSQL (skipped when unreachable, unless MDX_REQUIRE_DB=1)",
+    "live: calls a live external service (Azure OpenAI, Langfuse); run manually",
+]
+
+# --- ruff ---------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "I",       # isort
+    "B",       # bugbear
+    "UP",      # pyupgrade
+    "SIM",     # simplify
+    "RUF",     # ruff-specific
+    "N",       # naming
+    "S",       # bandit (security)
+    "PTH",     # prefer pathlib
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "S101",    # assert is fine (tests, invariants)
+    "B905",  # zip without strict
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S108"]  # hardcoded test credentials and tmp paths
+
+# --- mypy ---------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+plugins = ["pydantic.mypy"]
+warn_unreachable = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
