@@ -54,6 +54,8 @@ class AppSettings(BaseSettings):
 
     config_dir: Path = PROJECT_ROOT / "config"
     """Versioned configuration: playbooks, profiles, manifests, prompts (E1-06)."""
+    data_dir: Path = PROJECT_ROOT / "data"
+    """Local data: simulated ADB days live in `<data_dir>/sim/<business date>/` (git-ignored)."""
     secrets_backend: SecretsBackend = SecretsBackend.ENV
     """Where secrets come from; see `mdx_assessment.secret_store`."""
     environment: str = Field(default="local", pattern=r"^[a-z0-9][a-z0-9_-]{0,39}$")

@@ -59,8 +59,9 @@ API_PORT ?= 8000
 api: ## Run the API with reload on API_PORT (default 8000)
 	$(UV) run uvicorn mdx_assessment.app:app --reload --host 127.0.0.1 --port $(API_PORT)
 
-sim: ## Generate a simulated MDX day, e.g. make sim DATE=2026-10-15 [SP2, E2-01]
-	@echo "Not available yet: added in SP2 (E2-01)." && exit 1
+sim: ## Generate a simulated MDX day, e.g. make sim DATE=2026-10-15 [SEED=7]
+	@test -n "$(DATE)" || (echo "Usage: make sim DATE=YYYY-MM-DD [SEED=n]" && exit 1)
+	$(UV) run python -m mdx_assessment.usecases.mdx.sim --date $(DATE) $(if $(SEED),--seed $(SEED),)
 
 smoke-trace: ## Send a test trace to Langfuse and confirm it was stored
 	$(UV) run python -m mdx_assessment.core.observability.smoke

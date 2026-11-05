@@ -1,0 +1,47 @@
+# Simulated linear MDX day (owner: MDX pack; plan §2.3, E2-01).
+# Synthetic data shaped like ADB's description; not real market levels.
+# `make sim DATE=YYYY-MM-DD` writes the day to data/sim/<date>/.
+
+seed: 20261015
+history_days: 60              # business days of history before the business date
+file_id: mdx_linear_rates     # the expected_files.yaml entry this file delivers
+arrival_time: "16:42"         # local time (expected_files.yaml timezone), before the 17:00 cut-off
+
+mean_reversion: 0.15          # daily pull back towards each curve's base shape
+idiosyncratic_share: 0.25     # share of a tenor's daily variance that is its own
+
+tenors: [1M, 3M, 6M, 1Y, 2Y, 3Y, 5Y, 7Y, 10Y, 30Y]
+
+# Base shape: long + (short - long) * exp(-t / decay_years). Rates in percent.
+# daily_vol_bps: one standard deviation of a day's move, for every tenor of the curve.
+curves:
+  - {id: USD, short_rate: 3.90, long_rate: 4.30, decay_years: 2.0, daily_vol_bps: 4.0, color_code: key}
+  - {id: EUR, short_rate: 2.00, long_rate: 2.60, decay_years: 2.5, daily_vol_bps: 3.5, color_code: key}
+  - {id: GBP, short_rate: 3.80, long_rate: 4.20, decay_years: 2.0, daily_vol_bps: 3.5, color_code: key}
+  - {id: JPY, short_rate: 0.05, long_rate: 1.50, decay_years: 6.0, daily_vol_bps: 3.5, color_code: key}
+  - {id: CHF, short_rate: 0.10, long_rate: 0.90, decay_years: 5.0, daily_vol_bps: 3.0, color_code: key}
+  - {id: AUD, short_rate: 3.60, long_rate: 4.30, decay_years: 3.0, daily_vol_bps: 4.5, color_code: key}
+  - {id: CAD, short_rate: 2.80, long_rate: 3.40, decay_years: 3.0, daily_vol_bps: 4.0, color_code: non_key}
+  - {id: SEK, short_rate: 2.00, long_rate: 2.60, decay_years: 3.0, daily_vol_bps: 3.5, color_code: non_key,
+     color_overrides: {30Y: greyed}}
+
+mdx_rule:
+  relative_change_pct: 2.0    # MDX's generic percentage rule: overstates moves near zero.
+                              # 2.0 gives ~25 flags (28 on the default seed; 19-33 across seeds)
+
+planted:
+  # ADB's worked example (scenario S2): "+75%" but +3 bps, coherent with the short end.
+  - id: jpy_3m_artifact
+    kind: threshold_artifact
+    curve: JPY
+    tenor: 3M
+    previous: 0.04
+    current: 0.07
+    neighbour_change_bps: 2.5
+  # A genuine large move (z > 4) for contrast; the 1Y and 3Y move with it, less.
+  - id: gbp_2y_genuine
+    kind: genuine_large_move
+    curve: GBP
+    tenor: 2Y
+    change_bps: 18
+    neighbour_change_bps: 9
