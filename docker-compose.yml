@@ -1,0 +1,34 @@
+# Local development stack: PostgreSQL 16 (cases store, audit trail, LangGraph checkpoints).
+#
+#   make dev        start and wait until healthy
+#   make down       stop (data is kept in the named volume)
+#   make dev-reset  stop and delete the data volume
+#
+# Values come from `.env` (compose reads it automatically). The port is bound to
+# 127.0.0.1 only. Tracing goes to Langfuse Cloud (LANGFUSE_HOST in .env), so no
+# Langfuse services run locally.
+
+name: mdx-assessment
+
+services:
+  postgres:
+    image: docker.io/postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      - 127.0.0.1:${POSTGRES_PORT:-5432}:5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  postgres_data:

@@ -2,7 +2,7 @@
 # Every Python command runs through `uv run`, so the locked environment is always used.
 
 .DEFAULT_GOAL := help
-.PHONY: help install dev down test lint fmt typecheck migrate api sim smoke-llm
+.PHONY: help install dev down dev-reset test lint fmt typecheck migrate api sim smoke-llm
 
 UV ?= uv
 
@@ -13,11 +13,21 @@ install: ## Install dependencies and pre-commit hooks
 	$(UV) sync --locked
 	$(UV) run pre-commit install
 
-dev: ## Start local services (Postgres, Langfuse) [E1-03]
-	@echo "Not available yet: added in E1-03 (docker-compose)." && exit 1
+COMPOSE ?= docker compose
 
-down: ## Stop local services [E1-03]
-	@echo "Not available yet: added in E1-03 (docker-compose)." && exit 1
+dev: ## Start local services (Postgres) and wait until healthy
+	@test -f .env || (echo "Missing .env: cp .env.example .env and fill it in." && exit 1)
+	$(COMPOSE) up -d --wait --wait-timeout 120
+	@$(COMPOSE) ps --format 'table {{.Service}}\t{{.Status}}'
+	@echo ""
+	@echo "Postgres : localhost:$${POSTGRES_PORT:-5432}"
+	@echo "Langfuse : Langfuse Cloud (LANGFUSE_HOST in .env)"
+
+down: ## Stop local services (data is kept)
+	$(COMPOSE) down
+
+dev-reset: ## Stop local services AND delete their data volume
+	$(COMPOSE) down --volumes
 
 test: ## Run the test suite
 	$(UV) run pytest
