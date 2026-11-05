@@ -13,12 +13,16 @@ from pydantic import BaseModel
 import mdx_assessment.core.domain as core_domain
 import mdx_assessment.usecases.mdx.domain as mdx_domain
 from mdx_assessment.core.domain import (
+    GENESIS_HASH,
+    AuditEvent,
+    ChainVerification,
     Decision,
     DecisionKind,
     DomainModel,
     Evidence,
     Finding,
     Measure,
+    NewAuditEvent,
     Plan,
     PlanSource,
     PlanStep,
@@ -93,7 +97,23 @@ DECISION = Decision(
     evidence_ids=(EV.evidence_id,),
 )
 
+NEW_EVENT = NewAuditEvent(
+    session_id="sess-1", actor="master_agent", event_type="plan", payload={"steps": 3, "ok": True}
+)
+
 SAMPLES: list[BaseModel] = [
+    NEW_EVENT,
+    AuditEvent(
+        seq=1,
+        ts=T0,
+        session_id="sess-1",
+        actor="master_agent",
+        event_type="plan",
+        payload={"steps": 3, "ok": True},
+        prev_hash=GENESIS_HASH,
+        hash="b" * 64,
+    ),
+    ChainVerification(valid=False, events_checked=4, first_broken_seq=3, reason="gap"),
     EV,
     MEASURE,
     FINDING,
