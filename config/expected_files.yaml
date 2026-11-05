@@ -1,0 +1,13 @@
+# Expected input files per session (owner: MDX pack). Checked by the Input
+# Validation Agent: file present, record count matches (E7-01); delivery time from E7-03.
+# Names and counts match the simulated MDX day (plan §2.3: 8 curves x 10 tenors).
+
+timezone: Asia/Manila   # ADB HQ; `expected_by` times are local to this zone
+
+files:
+  - id: mdx_linear_rates
+    data_type: linear
+    name_pattern: mdx_linear_rates_{yyyymmdd}.csv
+    expected_record_count: 80
+    expected_by: "17:00"
+    description: Linear rate curves (simulated vendor file loaded into MDX).

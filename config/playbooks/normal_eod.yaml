@@ -1,0 +1,12 @@
+# Normal end-of-day playbook (owner: core). The default playbook (plan §2.5).
+# Placeholder in SP1: SP2 (E6-03) adds mandatory steps, allowed follow-ups,
+# limits, the default plan, `selected_when` and precedence.
+
+id: normal_eod
+version: "1"
+title: Normal end-of-day
+status: placeholder
+description: >-
+  Input validation, market data assessment, escalation and reporting, then review.
+  Follow-ups: compare a file with the prior day's, fetch longer history or related
+  curves, re-assess one item.

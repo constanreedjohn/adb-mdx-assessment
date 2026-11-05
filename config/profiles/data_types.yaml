@@ -1,0 +1,16 @@
+# Data-type profiles (owner: MDX pack). One per market-data kind.
+#   quote_unit       how values arrive from MDX
+#   measure_unit     native unit for absolute change
+#   near_zero_floor  in quote units; |previous value| below this → relative change
+#                    is marked unreliable (near-zero threshold artifact, scenario S2)
+# Only rates are needed for the walking skeleton; other kinds arrive with their stories.
+
+profiles:
+  rate:
+    quote_unit: percent
+    measure_unit: bps
+    near_zero_floor: 0.10   # 0.10% = 10 bps
+    provisional: true
+    note: >-
+      Placeholder until ADB confirms the level below which percentage changes on
+      rates aren't trusted (open question Q-05 / S2.1).
