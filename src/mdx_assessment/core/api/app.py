@@ -7,20 +7,12 @@ depends on the use-case packs that registered config schemas).
 
 from __future__ import annotations
 
-from importlib.metadata import PackageNotFoundError, version
 from typing import Literal
 
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-DIST_NAME = "mdx-assessment"
-
-
-def app_version() -> str:
-    try:
-        return version(DIST_NAME)
-    except PackageNotFoundError:  # running from a source tree without an install
-        return "0.0.0+unknown"
+from mdx_assessment.core.meta import DIST_NAME, app_version
 
 
 class HealthResponse(BaseModel):
@@ -31,7 +23,7 @@ class VersionResponse(BaseModel):
     app: str
     version: str
     config_version: str | None
-    """Content hash of `config/` (E1-06). None until config versioning is wired in."""
+    """Content hash of `config/` (E1-06), as recorded by every session."""
 
 
 def create_app(*, config_version: str | None = None) -> FastAPI:

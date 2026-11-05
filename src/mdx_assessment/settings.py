@@ -20,7 +20,7 @@ from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -56,6 +56,8 @@ class AppSettings(BaseSettings):
     """Versioned configuration: playbooks, profiles, manifests, prompts (E1-06)."""
     secrets_backend: SecretsBackend = SecretsBackend.ENV
     """Where secrets come from; see `mdx_assessment.secret_store`."""
+    environment: str = Field(default="local", pattern=r"^[a-z0-9][a-z0-9_-]{0,39}$")
+    """Deployment label on traces, e.g. local, ci, poc (Langfuse environment)."""
 
 
 class AzureOpenAIAuthMode(StrEnum):

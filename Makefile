@@ -2,7 +2,7 @@
 # Every Python command runs through `uv run`, so the locked environment is always used.
 
 .DEFAULT_GOAL := help
-.PHONY: help install dev down dev-reset test lint fmt typecheck migrate migration api sim smoke-llm
+.PHONY: help install dev down dev-reset test test-live lint fmt typecheck migrate migration api sim smoke-trace smoke-llm
 
 UV ?= uv
 
@@ -32,6 +32,9 @@ dev-reset: ## Stop local services AND delete their data volume
 test: ## Run the test suite
 	$(UV) run pytest
 
+test-live: ## Also run tests that call live services (Azure OpenAI, Langfuse)
+	MDX_RUN_LIVE=1 $(UV) run pytest -m live
+
 lint: ## Lint, check formatting and type-check
 	$(UV) run ruff check .
 	$(UV) run ruff format --check .
@@ -58,6 +61,9 @@ api: ## Run the API with reload on API_PORT (default 8000)
 
 sim: ## Generate a simulated MDX day, e.g. make sim DATE=2026-10-15 [SP2, E2-01]
 	@echo "Not available yet: added in SP2 (E2-01)." && exit 1
+
+smoke-trace: ## Send a test trace to Langfuse and confirm it was stored
+	$(UV) run python -m mdx_assessment.core.observability.smoke
 
 smoke-llm: ## One structured-output call to Azure OpenAI [E5-01]
 	@echo "Not available yet: added in E5-01." && exit 1
