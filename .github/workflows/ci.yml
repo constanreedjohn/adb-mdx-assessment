@@ -1,6 +1,6 @@
 # CI: lint, type-check and tests on every push to main and every pull request.
 #
-# No secrets are needed: LLM calls use the deterministic fake provider (from SP2),
+# No secrets are needed: LLM calls use the deterministic fake provider (MDX_LLM_PROVIDER=fake),
 # tracing is disabled, and tests marked `live` (real Azure OpenAI / Langfuse) are
 # excluded. Persistence tests run against the Postgres service container below,
 # and MDX_REQUIRE_DB=1 makes them fail (instead of skip) if it is unreachable.
@@ -49,6 +49,8 @@ jobs:
       POSTGRES_PASSWORD: mdx
       MDX_REQUIRE_DB: "1"
       LANGFUSE_ENABLED: "false"
+      MDX_LLM_PROVIDER: fake
+      MDX_ENVIRONMENT: ci
 
     # Actions are pinned to full commit SHAs (immutable; the comment names the release).
     # astral-sh/setup-uv publishes only exact tags (no moving `v10` tag).

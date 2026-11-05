@@ -47,6 +47,11 @@ class SecretsBackend(StrEnum):
     KEY_VAULT = "key_vault"  # Azure Key Vault (deployment; stub until E13-04)
 
 
+class LLMProviderKind(StrEnum):
+    AZURE_OPENAI = "azure_openai"
+    FAKE = "fake"  # deterministic scripted replies: CI and offline development
+
+
 class AppSettings(BaseSettings):
     """The application's own settings (prefix MDX_)."""
 
@@ -60,6 +65,8 @@ class AppSettings(BaseSettings):
     """Where secrets come from; see `mdx_assessment.secret_store`."""
     environment: str = Field(default="local", pattern=r"^[a-z0-9][a-z0-9_-]{0,39}$")
     """Deployment label on traces, e.g. local, ci, poc (Langfuse environment)."""
+    llm_provider: LLMProviderKind = LLMProviderKind.AZURE_OPENAI
+    """Which model the LLM gateway talks to (E5-02)."""
 
 
 class AzureOpenAIAuthMode(StrEnum):

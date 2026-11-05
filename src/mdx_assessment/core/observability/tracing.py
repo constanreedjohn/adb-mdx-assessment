@@ -22,7 +22,14 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from langfuse import Langfuse, LangfuseChain, LangfuseSpan, LangfuseTool, propagate_attributes
+from langfuse import (
+    Langfuse,
+    LangfuseChain,
+    LangfuseGeneration,
+    LangfuseSpan,
+    LangfuseTool,
+    propagate_attributes,
+)
 from opentelemetry.sdk.trace.export import SpanExporter
 
 from mdx_assessment.core.meta import app_version
@@ -107,6 +114,33 @@ class Tracer:
             name=name, as_type=kind, input=input, metadata=metadata
         ) as span:
             yield span
+
+    @contextmanager
+    def generation(
+        self,
+        name: str,
+        *,
+        model: str,
+        input: Any = None,
+        version: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Iterator[LangfuseGeneration | None]:
+        """A model call (Langfuse "generation"). Update it with output and usage when done.
+
+        `version` is the prompt version, so traces can be compared across prompt versions.
+        """
+        if self._client is None:
+            yield None
+            return
+        with self._client.start_as_current_observation(
+            name=name,
+            as_type="generation",
+            model=model,
+            input=input,
+            version=version,
+            metadata=metadata,
+        ) as generation:
+            yield generation
 
     def auth_check(self) -> bool:
         """True if Langfuse accepts the keys (a network call; for smoke tests, not per run).
