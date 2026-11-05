@@ -1,1 +1,33 @@
 """Base domain models shared by every use case: evidence, finding, measure, task, plan, decision, review."""
+
+from mdx_assessment.core.domain.base import DomainModel
+from mdx_assessment.core.domain.canonical import canonical_json, content_hash, sha256_hex
+from mdx_assessment.core.domain.evidence import Evidence, EvidenceId, compute_evidence_id
+from mdx_assessment.core.domain.findings import Finding, Measure, Severity
+from mdx_assessment.core.domain.planning import Plan, PlanSource, PlanStep, Task, TaskStatus
+from mdx_assessment.core.domain.review import Decision, DecisionKind, ReviewCheckResult
+from mdx_assessment.core.domain.session import SessionResult, SessionStatus, Versions
+
+__all__ = [
+    "Decision",
+    "DecisionKind",
+    "DomainModel",
+    "Evidence",
+    "EvidenceId",
+    "Finding",
+    "Measure",
+    "Plan",
+    "PlanSource",
+    "PlanStep",
+    "ReviewCheckResult",
+    "SessionResult",
+    "SessionStatus",
+    "Severity",
+    "Task",
+    "TaskStatus",
+    "Versions",
+    "canonical_json",
+    "compute_evidence_id",
+    "content_hash",
+    "sha256_hex",
+]
