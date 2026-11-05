@@ -42,6 +42,11 @@ def _config(prefix: str) -> SettingsConfigDict:
     )
 
 
+class SecretsBackend(StrEnum):
+    ENV = "env"  # environment variables / .env (local, CI)
+    KEY_VAULT = "key_vault"  # Azure Key Vault (deployment; stub until E13-04)
+
+
 class AppSettings(BaseSettings):
     """The application's own settings (prefix MDX_)."""
 
@@ -49,6 +54,8 @@ class AppSettings(BaseSettings):
 
     config_dir: Path = PROJECT_ROOT / "config"
     """Versioned configuration: playbooks, profiles, manifests, prompts (E1-06)."""
+    secrets_backend: SecretsBackend = SecretsBackend.ENV
+    """Where secrets come from; see `mdx_assessment.secret_store`."""
 
 
 class AzureOpenAIAuthMode(StrEnum):
