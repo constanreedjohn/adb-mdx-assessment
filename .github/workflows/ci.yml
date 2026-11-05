@@ -50,12 +50,14 @@ jobs:
       MDX_REQUIRE_DB: "1"
       LANGFUSE_ENABLED: "false"
 
+    # Actions are pinned to full commit SHAs (immutable; the comment names the release).
+    # astral-sh/setup-uv publishes only exact tags (no moving `v10` tag).
     steps:
       - name: Check out
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv (version from pyproject.toml)
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
           cache-python: true
