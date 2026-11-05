@@ -1,5 +1,12 @@
 """Base domain models shared by every use case: evidence, finding, measure, task, plan, decision, review."""
 
+from mdx_assessment.core.domain.audit import (
+    GENESIS_HASH,
+    AuditEvent,
+    ChainVerification,
+    NewAuditEvent,
+    verify_chain,
+)
 from mdx_assessment.core.domain.base import DomainModel
 from mdx_assessment.core.domain.canonical import canonical_json, content_hash, sha256_hex
 from mdx_assessment.core.domain.evidence import Evidence, EvidenceId, compute_evidence_id
@@ -9,6 +16,9 @@ from mdx_assessment.core.domain.review import Decision, DecisionKind, ReviewChec
 from mdx_assessment.core.domain.session import SessionResult, SessionStatus, Versions
 
 __all__ = [
+    "GENESIS_HASH",
+    "AuditEvent",
+    "ChainVerification",
     "Decision",
     "DecisionKind",
     "DomainModel",
@@ -16,6 +26,7 @@ __all__ = [
     "EvidenceId",
     "Finding",
     "Measure",
+    "NewAuditEvent",
     "Plan",
     "PlanSource",
     "PlanStep",
@@ -30,4 +41,5 @@ __all__ = [
     "compute_evidence_id",
     "content_hash",
     "sha256_hex",
+    "verify_chain",
 ]

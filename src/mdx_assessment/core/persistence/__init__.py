@@ -1,5 +1,10 @@
 """Database engine, repositories, audit hash chain and migrations."""
 
+from mdx_assessment.core.persistence.audit import (
+    AuditTrail,
+    InMemoryAuditTrail,
+    PostgresAuditTrail,
+)
 from mdx_assessment.core.persistence.db import (
     create_db_engine,
     create_session_factory,
@@ -14,9 +19,12 @@ from mdx_assessment.core.persistence.repositories import (
 )
 
 __all__ = [
+    "AuditTrail",
     "CaseRecord",
     "CaseRepo",
+    "InMemoryAuditTrail",
     "NotFoundError",
+    "PostgresAuditTrail",
     "SessionRepo",
     "create_db_engine",
     "create_session_factory",
