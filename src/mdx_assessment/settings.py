@@ -42,6 +42,15 @@ def _config(prefix: str) -> SettingsConfigDict:
     )
 
 
+class AppSettings(BaseSettings):
+    """The application's own settings (prefix MDX_)."""
+
+    model_config = _config("MDX_")
+
+    config_dir: Path = PROJECT_ROOT / "config"
+    """Versioned configuration: playbooks, profiles, manifests, prompts (E1-06)."""
+
+
 class AzureOpenAIAuthMode(StrEnum):
     API_KEY = "api_key"
     ENTRA = "entra"
@@ -124,8 +133,9 @@ class AppInsightsSettings(BaseSettings):
 
 
 class Settings(BaseModel):
-    """All third-party settings, grouped by service."""
+    """All settings, grouped by service (plus the app's own)."""
 
+    app: AppSettings
     azure_openai: AzureOpenAISettings
     postgres: PostgresSettings
     langfuse: LangfuseSettings
@@ -142,6 +152,7 @@ def _load[T: BaseSettings](cls: type[T]) -> T:
 def get_settings() -> Settings:
     """Load once per process. Call `get_settings.cache_clear()` in tests to reload."""
     return Settings(
+        app=_load(AppSettings),
         azure_openai=_load(AzureOpenAISettings),
         postgres=_load(PostgresSettings),
         langfuse=_load(LangfuseSettings),
