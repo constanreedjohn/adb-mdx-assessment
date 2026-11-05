@@ -12,11 +12,18 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
+from mcp import Client
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError
 
 from mdx_assessment.core.domain import GENESIS_HASH, NewAuditEvent
 from mdx_assessment.core.persistence import AuditTrail, PostgresAuditTrail
+from mdx_assessment.core.tools.audit import (
+    APPEND_EVENT,
+    READ_EVENTS,
+    VERIFY_CHAIN,
+    create_audit_server,
+)
 
 pytestmark = pytest.mark.db
 
@@ -111,6 +118,35 @@ def test_append_only_is_enforced_by_the_database(
     ):
         conn.execute(text(sql))
     assert trail.verify().events_checked == 2
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_mcp_client_appends_reads_and_verifies(
+    trail: PostgresAuditTrail, anyio_backend: str
+) -> None:
+    """Acceptance (E3-02): through MCP, against PostgreSQL."""
+    async with Client(create_audit_server(trail)) as client:
+        for step in ("plan", "tool_call", "decision"):
+            result = await client.call_tool(
+                APPEND_EVENT, {"actor": "master_agent", "event_type": step, "session_id": "s1"}
+            )
+            assert not result.is_error
+        read = await client.call_tool(READ_EVENTS, {"session_id": "s1"})
+        verify = await client.call_tool(VERIFY_CHAIN, {})
+    assert read.structured_content is not None
+    assert [e["event_type"] for e in read.structured_content["events"]] == [
+        "plan",
+        "tool_call",
+        "decision",
+    ]
+    assert verify.structured_content == {
+        "valid": True,
+        "events_checked": 3,
+        "first_broken_seq": None,
+        "reason": None,
+    }
+    assert len(trail.read()) == 3  # really stored in Postgres
 
 
 def test_concurrent_appends_keep_one_valid_chain(trail: PostgresAuditTrail) -> None:
