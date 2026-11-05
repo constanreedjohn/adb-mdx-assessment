@@ -1,0 +1,70 @@
+# CI: lint, type-check and tests on every push to main and every pull request.
+#
+# No secrets are needed: LLM calls use the deterministic fake provider (from SP2),
+# tracing is disabled, and tests marked `live` (real Azure OpenAI / Langfuse) are
+# excluded. Persistence tests run against the Postgres service container below,
+# and MDX_REQUIRE_DB=1 makes them fail (instead of skip) if it is unreachable.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Lint, type-check, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mdx
+          POSTGRES_PASSWORD: mdx
+          POSTGRES_DB: mdx_assessment
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mdx -d mdx_assessment"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: mdx_assessment
+      POSTGRES_USER: mdx
+      POSTGRES_PASSWORD: mdx
+      MDX_REQUIRE_DB: "1"
+      LANGFUSE_ENABLED: "false"
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Install uv (version from pyproject.toml)
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-python: true
+
+      - name: Install dependencies (lockfile must be up to date)
+        run: uv sync --locked
+
+      - name: Lint and type-check (ruff, ruff format, mypy --strict)
+        run: make lint
+
+      - name: Test (unit, contract, architecture, persistence)
+        run: uv run pytest -m "not live"
