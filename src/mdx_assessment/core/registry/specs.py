@@ -8,7 +8,7 @@ added by registering, not by editing core (plan §2.7).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
@@ -21,6 +21,15 @@ class ToolGroup(StrEnum):
     ADB_SYSTEM = "adb_system"  # read-only ADB systems: MDX, iFIRST, OneView, Reconciliation
     SOLUTION_DATA = "solution_data"  # the solution's own stores: cases, materiality, audit
     MODEL_ACCESS = "model_access"  # LLM gateway, Exception scoring model
+
+
+class ToolAccess(StrEnum):
+    """Access levels, as in the PDF §2.1 tool table (Read / Append / Write / Call)."""
+
+    READ = "read"
+    APPEND = "append"  # add records, never change or remove them (audit trail)
+    WRITE = "write"  # create or update the solution's own records (cases, materiality)
+    CALL = "call"  # invoke a model (LLM gateway, Exception scoring model)
 
 
 @runtime_checkable
@@ -37,6 +46,11 @@ class ToolSpec(Protocol):
 
     @property
     def description(self) -> str: ...
+
+    @property
+    def operations(self) -> Mapping[str, ToolAccess]:
+        """Each MCP operation (tool name) on this server and the access level it needs."""
+        ...
 
 
 @runtime_checkable

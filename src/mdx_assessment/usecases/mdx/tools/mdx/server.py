@@ -24,7 +24,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
-from mdx_assessment.core.registry.specs import ToolGroup
+from mdx_assessment.core.registry.specs import ToolAccess, ToolGroup
 from mdx_assessment.usecases.mdx.domain import (
     BusinessDate,
     DataType,
@@ -63,6 +63,16 @@ class MdxToolSpec(BaseModel):
         "MDX market data (read-only): expected files, file metadata, exception flags, "
         "curve values and history."
     )
+    operations: dict[str, ToolAccess] = {
+        name: ToolAccess.READ
+        for name in (
+            LIST_EXPECTED_FILES,
+            GET_FILE_METADATA,
+            GET_FLAGS,
+            GET_CURVE_VALUES,
+            GET_HISTORY,
+        )
+    }
 
 
 MDX_TOOL_SPEC = MdxToolSpec()

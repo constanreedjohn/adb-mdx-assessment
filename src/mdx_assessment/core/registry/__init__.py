@@ -1,13 +1,6 @@
-"""Task, agent and tool registries. Use-case packs register into these; core never names them."""
+"""Interfaces for what packs register: tasks, agents, tools. Low-level: imports nothing else
+from core, so any module can depend on it. The registries bundle lives in `core.platform`."""
 
-from mdx_assessment.core.registry.platform import PlatformRegistries, create_platform_registries
-from mdx_assessment.core.registry.specs import AgentSpec, TaskSpec, ToolGroup, ToolSpec
+from mdx_assessment.core.registry.specs import AgentSpec, TaskSpec, ToolAccess, ToolGroup, ToolSpec
 
-__all__ = [
-    "AgentSpec",
-    "PlatformRegistries",
-    "TaskSpec",
-    "ToolGroup",
-    "ToolSpec",
-    "create_platform_registries",
-]
+__all__ = ["AgentSpec", "TaskSpec", "ToolAccess", "ToolGroup", "ToolSpec"]

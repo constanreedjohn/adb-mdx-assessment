@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field, JsonValue, ValidationError
 
 from mdx_assessment.core.domain.audit import AuditEvent, ChainVerification, NewAuditEvent
 from mdx_assessment.core.persistence.audit import AuditTrail
-from mdx_assessment.core.registry.specs import ToolGroup
+from mdx_assessment.core.registry.specs import ToolAccess, ToolGroup
 
 SERVER_NAME = "activity-and-audit"
 TOOL_ID = "activity_and_audit"
@@ -66,7 +66,15 @@ class AuditToolSpec(BaseModel):
 
     id: str = TOOL_ID
     group: ToolGroup = ToolGroup.SOLUTION_DATA
-    description: str = "Append-only, hash-chained record of plans, tasks, tool and model calls, reviews and decisions."
+    description: str = (
+        "Append-only, hash-chained record of plans, tasks, tool and model calls, reviews "
+        "and decisions."
+    )
+    operations: dict[str, ToolAccess] = {
+        APPEND_EVENT: ToolAccess.APPEND,
+        READ_EVENTS: ToolAccess.READ,
+        VERIFY_CHAIN: ToolAccess.READ,
+    }
 
 
 AUDIT_TOOL_SPEC = AuditToolSpec()

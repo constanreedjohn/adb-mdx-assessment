@@ -20,9 +20,9 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
-from langfuse import Langfuse, LangfuseSpan, propagate_attributes
+from langfuse import Langfuse, LangfuseChain, LangfuseSpan, LangfuseTool, propagate_attributes
 from opentelemetry.sdk.trace.export import SpanExporter
 
 from mdx_assessment.core.meta import app_version
@@ -32,6 +32,8 @@ from mdx_assessment.settings import Settings, get_settings
 logger = logging.getLogger(__name__)
 
 APP_NAME = "mdx-assessment"
+
+SpanKind = Literal["span", "tool", "chain"]
 
 
 def trace_id_for_session(session_id: str) -> str:
@@ -91,13 +93,18 @@ class Tracer:
         *,
         input: Any = None,
         metadata: dict[str, Any] | None = None,
-    ) -> Iterator[LangfuseSpan | None]:
-        """A child span of whatever is current (e.g. a graph node). None when disabled."""
+        kind: SpanKind = "span",
+    ) -> Iterator[LangfuseSpan | LangfuseTool | LangfuseChain | None]:
+        """A child span of whatever is current (e.g. a graph node, a tool call).
+
+        `kind` sets how Langfuse displays it: "span", "tool" (MCP tool calls) or
+        "chain" (a sequence of steps). None is yielded when tracing is disabled.
+        """
         if self._client is None:
             yield None
             return
         with self._client.start_as_current_observation(
-            name=name, as_type="span", input=input, metadata=metadata
+            name=name, as_type=kind, input=input, metadata=metadata
         ) as span:
             yield span
 

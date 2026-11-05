@@ -15,8 +15,9 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from mdx_assessment.core.api import create_app
-from mdx_assessment.core.config import LoadedConfig
-from mdx_assessment.core.registry import PlatformRegistries, create_platform_registries
+from mdx_assessment.core.config import ConfigError, LoadedConfig
+from mdx_assessment.core.platform import PlatformRegistries, create_platform_registries
+from mdx_assessment.core.tools.permissions import PERMISSIONS_PATH, PermissionMatrix
 from mdx_assessment.settings import get_settings
 from mdx_assessment.usecases.mdx import register as mdx_pack
 
@@ -28,9 +29,17 @@ def build_registries() -> PlatformRegistries:
 
 
 def load_config(config_dir: Path | None = None) -> LoadedConfig:
-    """Validate `config/` against every registered schema. Raises ConfigError."""
+    """Validate `config/` against every registered schema, and the permission matrix
+    against the registered tools. Raises ConfigError listing every problem."""
     directory = config_dir or get_settings().app.config_dir
-    return build_registries().config.load_config(directory)
+    registries = build_registries()
+    config = registries.config.load_config(directory)
+    problems = config.get(PERMISSIONS_PATH, PermissionMatrix).check_against_tools(
+        registries.tools.specs
+    )
+    if problems:
+        raise ConfigError(problems)
+    return config
 
 
 def build_app(config_dir: Path | None = None) -> FastAPI:

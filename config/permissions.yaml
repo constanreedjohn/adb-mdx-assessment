@@ -1,0 +1,29 @@
+# Tool permission matrix (owner: core; PDF §2.1 tool table, §3.5 least privilege).
+# Rows: tools. Columns: agents. Cells: access levels (read, append, write, call).
+# Anything not listed here is denied. Every registered tool needs a row, and a row
+# may only grant levels the tool has operations for (checked at startup).
+# Rows are added as tools are built: Exception cases (E3-04), iFIRST, OneView,
+# Reconciliation (E3-06), Materiality (E3-07), Exception scoring model (E9-06).
+
+version: "1"
+
+agents:
+  - master_agent
+  - input_validation
+  - market_data_assessment
+  - escalation_reporting
+
+tools:
+  # ADB system, read-only. Escalation and Reporting: "No" in the PDF table.
+  mdx_data:
+    master_agent: [read]
+    input_validation: [read]
+    market_data_assessment: [read]
+    escalation_reporting: []
+
+  # Solution data. Input Validation and Market Data Assessment append only.
+  activity_and_audit:
+    master_agent: [append, read]
+    input_validation: [append]
+    market_data_assessment: [append]
+    escalation_reporting: [append, read]
