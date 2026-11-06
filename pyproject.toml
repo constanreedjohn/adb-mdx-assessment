@@ -3,12 +3,14 @@ name = "mdx-assessment"
 version = "0.1.0"
 description = "MDX Daily Validation Agent: supervised multi-agent exception assessment (PoC)"
 requires-python = ">=3.12,<3.13"
-# Majors are capped: the code is written against these APIs (mcp 2, openai 3, langfuse 5).
+# Majors are capped: the code is written against these APIs (mcp 2, openai 3, langfuse 5, langgraph 1).
 dependencies = [
     "alembic>=1.14,<2",
     "azure-identity>=1.19,<2",
     "fastapi>=0.115",
     "langfuse>=5.1,<6",
+    "langgraph>=1.2.20,<2",
+    "langgraph-checkpoint-postgres>=3.2,<4",
     "mcp>=2.3,<3",
     "openai>=3.46,<4",
     "psycopg[binary]>=3.2,<4",
