@@ -149,16 +149,32 @@ def test_a_rejected_plan_shows_the_marked_default_plan(
     assert session["fallbacks"] == ["plan_default:plan_invalid"]
 
 
-def test_an_unavailable_model_returns_the_stopped_session(
+def test_an_unavailable_model_still_completes_on_the_default_plan(
     config: LoadedConfig, settings: Settings
 ) -> None:
     client = client_for(config, settings, down)
     started = client.post("/sessions", json=BODY).json()
-    assert started["status"] == "failed"
+    assert started["status"] == "default_complete"
     assert "developer" in started["analyst_notice"]
     session = client.get(f"/sessions/{started['session_id']}").json()
-    assert session["execution"] == []
-    assert session["plan"] is None
+    assert session["plan"]["source"] == "default"
+    assert session["fallbacks"] == ["plan_default:model_unavailable"]
+    assert [e["status"] for e in session["execution"]] == ["done", "done", "done"]
+    assert session["agent_results"]["validate_inputs"]["flags_read"] == 28
+
+
+def test_with_the_llm_off_a_run_needs_no_gateway(config: LoadedConfig, settings: Settings) -> None:
+    # This gateway factory raises if it is called, so a completed run proves it wasn't.
+    client = client_for(config, settings, RuntimeError("no model credentials"))
+    started = client.post("/sessions", json={**BODY, "llm_enabled": False}).json()
+    assert started["status"] == "default_complete"
+    assert "turned off" in started["analyst_notice"]
+    session = client.get(f"/sessions/{started['session_id']}").json()
+    assert session["llm_enabled"] is False
+    assert session["plan"]["source"] == "default"
+    assert session["fallbacks"] == ["plan_default:llm_off"]
+    assert session["versions"]["llm_deployment"] is None
+    assert [e["status"] for e in session["execution"]] == ["done", "done", "done"]
 
 
 def test_an_unknown_data_type_stops_the_run(
@@ -259,11 +275,11 @@ def test_a_stopped_run_is_marked_as_an_error_in_the_trace(
     config: LoadedConfig, settings: Settings, traced: tuple[Tracer, InMemorySpanExporter]
 ) -> None:
     tracer, exporter = traced
-    client = client_for(config, settings, down, tracer)
-    client.post("/sessions", json=BODY)
+    client = client_for(config, settings, valid_plan(config), tracer)
+    client.post("/sessions", json={**BODY, "data_type": "equity"})  # no facts can be read
     tracer.flush()
     level = LangfuseOtelSpanAttributes.OBSERVATION_LEVEL
     errors = {
         s.name for s in exporter.get_finished_spans() if (s.attributes or {}).get(level) == "ERROR"
     }
-    assert {"assessment_session", "node:master_plan"} <= errors
+    assert {"assessment_session", "node:run_context"} <= errors

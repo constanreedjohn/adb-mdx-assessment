@@ -66,6 +66,8 @@ class RunState(BaseModel):
     business_date: date
     data_type: str = Field(min_length=1)
     versions: Versions = Field(default_factory=Versions)
+    llm_enabled: bool = True
+    """False runs the default plan with no LLM call: the analyst turned the LLM off."""
 
     run_context: RunContext = Field(default_factory=RunContext)
     """Facts and observations gathered by code at session start."""

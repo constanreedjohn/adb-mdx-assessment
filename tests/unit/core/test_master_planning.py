@@ -322,11 +322,26 @@ def down(request: LLMRequest) -> dict[str, Any]:
     raise LLMUnavailableError("connection refused")
 
 
-async def test_an_unavailable_model_is_not_retried_or_replaced(tmp_path: Path) -> None:
+async def test_an_unavailable_model_is_not_retried_and_uses_the_default_plan(
+    tmp_path: Path,
+) -> None:
     harness = Harness(tmp_path, down)
-    with pytest.raises(LLMUnavailableError):
-        await harness.plan()
+    plan = await harness.plan()
+    assert plan.source is PlanSource.DEFAULT
+    assert [s.step_id for s in plan.steps] == ["default_1", "default_2"]
+    assert plan.validation is not None
+    assert (plan.validation.fallback_reason, plan.validation.attempts) == ("model_unavailable", 1)
     assert len(harness.fake.requests) == 1
+
+
+async def test_with_the_llm_off_the_model_is_not_called(tmp_path: Path) -> None:
+    harness = Harness(tmp_path, reply())
+    state = harness.state().model_copy(update={"llm_enabled": False})
+    plan = await master_plan_hook(harness.runtime)(state)
+    assert plan.source is PlanSource.DEFAULT
+    assert plan.validation is not None
+    assert (plan.validation.fallback_reason, plan.validation.attempts) == ("llm_off", 0)
+    assert harness.fake.requests == []
 
 
 async def test_without_facts_the_model_is_not_called(tmp_path: Path) -> None:
@@ -338,12 +353,13 @@ async def test_without_facts_the_model_is_not_called(tmp_path: Path) -> None:
     assert harness.fake.requests == []
 
 
-def test_a_gateway_is_required() -> None:
-    runtime = SessionRuntime(
-        tasks=registry(), checks=ReviewCheckRegistry(), audit=InMemoryAuditTrail()
-    )
+async def test_a_gateway_is_required_unless_the_llm_is_off(tmp_path: Path) -> None:
+    harness = Harness(tmp_path, reply())
+    harness.runtime.gateway = None
     with pytest.raises(ValueError, match="LLM gateway"):
-        master_plan_hook(runtime)
+        await harness.plan()
+    off = harness.state().model_copy(update={"llm_enabled": False})
+    assert (await master_plan_hook(harness.runtime)(off)).source is PlanSource.DEFAULT
 
 
 # --- audit and the graph -------------------------------------------------------------------
@@ -395,7 +411,9 @@ async def test_the_default_plan_ends_as_default_complete(tmp_path: Path) -> None
     assert [e.step_id for e in final.execution] == ["default_1", "default_2"]
     assert final.fallbacks == ["plan_default:plan_invalid"]
     assert final.status is SessionStatus.DEFAULT_COMPLETE
+    assert final.analyst_notice is not None and "usable plan" in final.analyst_notice
     assert harness.events("plan")[0]["source"] == "default"
+    assert harness.events("plan")[0]["fallback_reason"] == "plan_invalid"
     assert harness.audit.verify().valid
 
 
@@ -411,16 +429,18 @@ async def test_a_failed_step_on_the_default_plan_is_still_listed(tmp_path: Path)
     assert final.fallbacks == ["plan_default:plan_invalid", "step_failed:default_1"]
 
 
-async def test_an_unavailable_model_stops_the_run_and_tells_the_analyst(
+async def test_an_unavailable_model_runs_the_default_plan_and_tells_the_analyst(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     harness = Harness(tmp_path, down)
-    with caplog.at_level(logging.ERROR, logger="mdx_assessment.core.orchestration.graph"):
+    with caplog.at_level(logging.ERROR, logger="mdx_assessment.core.master.planning"):
         final = await run_graph(harness)
-    assert final.status is SessionStatus.FAILED
+    assert final.status is SessionStatus.DEFAULT_COMPLETE
+    assert final.fallbacks == ["plan_default:model_unavailable"]
     assert final.analyst_notice is not None and "developer" in final.analyst_notice
     assert "connection refused" not in final.analyst_notice
     assert "connection refused" in caplog.text
-    assert final.plan is None
-    assert final.execution == []
-    assert harness.events("session_completed") == []
+    assert final.plan is not None and final.plan.source is PlanSource.DEFAULT
+    assert [e.step_id for e in final.execution] == ["default_1", "default_2"]
+    assert harness.events("plan")[0]["fallback_reason"] == "model_unavailable"
+    assert len(harness.events("session_completed")) == 1

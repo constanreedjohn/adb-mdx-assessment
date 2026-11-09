@@ -15,9 +15,12 @@
 - **Safe failure.** An unknown task, a crash or invalid output fails that step only:
   it is recorded with its error, flagged at its review point, and the run continues
   and completes, marked degraded (PDF §3.3).
-- **Runtime errors stop the run.** If the source system or the model is unreachable,
-  no LLM or analyst can fix that: the run ends `failed` with a notice for the analyst,
-  and the full cause goes to the log.
+- **The default plan keeps the run going without the LLM.** If the model is unreachable,
+  its plan is still invalid after the retry, or the LLM is off for this run, the
+  playbook's default plan runs, with a notice for the analyst.
+- **No facts stops the run.** If the source system can't be read at session start,
+  there is nothing to check: the run ends `failed` with a notice for the analyst, and
+  the full cause goes to the log.
 - **Tracing.** Every node is a span in the session's Langfuse trace.
 - Every plan, task and decision is an audit event.
 """
@@ -47,7 +50,6 @@ from mdx_assessment.core.domain import (
     TaskStatus,
 )
 from mdx_assessment.core.gateway.gateway import LLMGateway
-from mdx_assessment.core.gateway.provider import LLMError
 from mdx_assessment.core.observability.tracing import Tracer
 from mdx_assessment.core.orchestration.playbooks import ResolvedPlaybook
 from mdx_assessment.core.orchestration.state import ExecutionEntry, RunState
@@ -69,10 +71,28 @@ FACTS_UNAVAILABLE_NOTICE = (
     "No checks were completed. A developer needs to fix the connection, then the run can "
     "be started again."
 )
-MODEL_UNAVAILABLE_NOTICE = (
-    "This run stopped because the AI model could not be reached. No checks were completed. "
-    "A developer needs to fix the connection, then the run can be started again."
-)
+FALLBACK_INVALID = "plan_invalid"
+FALLBACK_NO_FACTS = "no_facts"
+FALLBACK_MODEL_UNAVAILABLE = "model_unavailable"
+FALLBACK_LLM_OFF = "llm_off"
+PLAN_FALLBACK_NOTICES = {
+    FALLBACK_INVALID: (
+        "The AI model did not return a usable plan, so this run followed the playbook's "
+        "default plan, with no follow-ups."
+    ),
+    FALLBACK_NO_FACTS: (
+        "There were no facts to plan from, so this run followed the playbook's default "
+        "plan, with no follow-ups."
+    ),
+    FALLBACK_MODEL_UNAVAILABLE: (
+        "The AI model could not be reached, so this run followed the playbook's default "
+        "plan, with no follow-ups. A developer needs to check the connection."
+    ),
+    FALLBACK_LLM_OFF: (
+        "The AI model was turned off for this run, so it followed the playbook's default "
+        "plan, with no follow-ups."
+    ),
+}
 Clock = Callable[[], datetime]
 
 ContextHook = Callable[[RunState], Awaitable[RunContext]]
@@ -205,11 +225,8 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
         return {"playbook": playbook}
 
     async def master_plan(state: RunState) -> dict[str, Any]:
-        try:
-            plan = await hooks.plan(state)
-        except LLMError:
-            logger.exception("session %s stopped: model unavailable", state.session_id)
-            return {"status": SessionStatus.FAILED, "analyst_notice": MODEL_UNAVAILABLE_NOTICE}
+        plan = await hooks.plan(state)
+        reason = plan.validation.fallback_reason if plan.validation else None
         await runtime.record(
             state,
             MASTER_AGENT,
@@ -219,11 +236,13 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
                 "steps": [{"step_id": s.step_id, "task": s.task} for s in plan.steps],
                 "follow_ups": [s.task for s in plan.follow_ups],
                 "cited_fact_ids": list(plan.cited_fact_ids),
+                **({"fallback_reason": reason} if reason else {}),
             },
         )
         update: dict[str, Any] = {"plan": plan, "next_step": 0}
-        if plan.validation and plan.validation.fallback_reason:
-            update["fallbacks"] = [f"plan_default:{plan.validation.fallback_reason}"]
+        if reason:
+            update["fallbacks"] = [f"plan_default:{reason}"]
+            update["analyst_notice"] = PLAN_FALLBACK_NOTICES[reason]
         return update
 
     async def dispatch(state: RunState) -> dict[str, Any]:

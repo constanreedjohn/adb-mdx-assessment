@@ -20,6 +20,8 @@ class StartSessionRequest(BaseModel):
 
     business_date: date
     data_type: DataType
+    llm_enabled: bool = True
+    """False runs the playbook's default plan with no AI model."""
 
 
 class StartSessionResponse(BaseModel):
@@ -35,7 +37,9 @@ def create_sessions_router(service: SessionService) -> APIRouter:
     @router.post("", status_code=status.HTTP_201_CREATED)
     async def start_session(request: StartSessionRequest) -> StartSessionResponse:
         """Run a session to its end. A run that stopped is still a session: read its status."""
-        result = await service.start(request.business_date, request.data_type)
+        result = await service.start(
+            request.business_date, request.data_type, llm_enabled=request.llm_enabled
+        )
         return StartSessionResponse(
             session_id=result.session_id,
             status=result.status,

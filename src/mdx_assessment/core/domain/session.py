@@ -26,7 +26,7 @@ class SessionStatus(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
     COMPLETED_DEGRADED = "completed_degraded"  # completed with a fallback (plan §3.3)
-    DEFAULT_COMPLETE = "default_complete"  # Master planning failed; the default plan ran
+    DEFAULT_COMPLETE = "default_complete"  # the default plan ran instead of a Master plan
     FAILED = "failed"
 
 
@@ -48,6 +48,7 @@ class SessionResult(DomainModel):
     session_id: NonEmptyStr
     business_date: date
     data_type: NonEmptyStr
+    llm_enabled: bool = True
     status: SessionStatus = SessionStatus.RUNNING
     started_at: AwareDatetime
     finished_at: AwareDatetime | None = None

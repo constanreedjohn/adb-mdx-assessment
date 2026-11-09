@@ -81,7 +81,9 @@ class SessionService:
         self._make_tracer = make_tracer
         self._tracer: Tracer | None = None
 
-    async def start(self, business_date: date, data_type: str) -> SessionResult:
+    async def start(
+        self, business_date: date, data_type: str, *, llm_enabled: bool = True
+    ) -> SessionResult:
         """Run a session to its end (synchronously for now) and return the stored result."""
         session_id = f"sess-{uuid.uuid4().hex[:12]}"
         started_at = datetime.now(UTC)
@@ -91,6 +93,7 @@ class SessionService:
             business_date=business_date,
             data_type=data_type,
             versions=versions,
+            llm_enabled=llm_enabled,
         )
         await asyncio.to_thread(
             self._store.add,
@@ -98,6 +101,7 @@ class SessionService:
                 session_id=session_id,
                 business_date=business_date,
                 data_type=data_type,
+                llm_enabled=llm_enabled,
                 started_at=started_at,
                 versions=versions,
             ),
@@ -108,7 +112,11 @@ class SessionService:
 
         with tracer.session_trace(
             session_id,
-            input={"business_date": business_date.isoformat(), "data_type": data_type},
+            input={
+                "business_date": business_date.isoformat(),
+                "data_type": data_type,
+                "llm_enabled": llm_enabled,
+            },
             metadata={"config_version": self._config.version},
             tags=[data_type],
         ) as trace:
@@ -136,9 +144,10 @@ class SessionService:
         registries = self._registries
         if registries.facts is None:
             raise ValueError("no use-case pack registered a facts builder")
-        gateway = self._make_gateway(self._audit, tracer)
+        # With the LLM off no gateway exists, so a run needs no model credentials.
+        gateway = self._make_gateway(self._audit, tracer) if initial.llm_enabled else None
         versions = initial.versions.model_copy(
-            update={"llm_deployment": gateway.provider.deployment}
+            update={"llm_deployment": gateway.provider.deployment if gateway else None}
         )
         context = ToolContext(config=self._config, settings=self._settings, audit=self._audit)
         permissions = self._config.get(PERMISSIONS_PATH, PermissionMatrix)
@@ -185,6 +194,7 @@ class SessionService:
             session_id=state.session_id,
             business_date=state.business_date,
             data_type=state.data_type,
+            llm_enabled=state.llm_enabled,
             status=state.status,
             started_at=started_at,
             finished_at=datetime.now(UTC),

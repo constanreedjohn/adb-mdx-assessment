@@ -12,10 +12,11 @@ data, and returns a plan. Code then validates it:
 - **P-4 Evidence:** at least one citation, and every cited ID, or ID named in a
   rationale, exists. Number matching joins this check with E5-03.
 
-Invalid output is retried once with the reasons attached. If it still fails, or there
-are no facts to cite, the selected playbook's default plan runs, marked `source: default`.
-An unavailable model is not handled here: `LLMError` propagates and the graph stops the
-run, because that needs a developer. Each attempt is logged to the terminal.
+Invalid output is retried once with the reasons attached. The selected playbook's
+default plan runs, marked `source: default`, if the output still fails, there are no
+facts to cite, the model is unavailable (not retried here: the provider already has) or
+the LLM is off for this run. The default plan makes no LLM call. Each attempt is logged
+to the terminal.
 """
 
 from __future__ import annotations
@@ -34,8 +35,16 @@ from mdx_assessment.core.domain import (
     PlanValidation,
 )
 from mdx_assessment.core.gateway.gateway import LLMGateway
-from mdx_assessment.core.gateway.provider import LLMOutputError
-from mdx_assessment.core.orchestration.graph import MASTER_AGENT, PlanHook, SessionRuntime
+from mdx_assessment.core.gateway.provider import LLMError, LLMOutputError
+from mdx_assessment.core.orchestration.graph import (
+    FALLBACK_INVALID,
+    FALLBACK_LLM_OFF,
+    FALLBACK_MODEL_UNAVAILABLE,
+    FALLBACK_NO_FACTS,
+    MASTER_AGENT,
+    PlanHook,
+    SessionRuntime,
+)
 from mdx_assessment.core.orchestration.playbooks import ResolvedPlaybook
 from mdx_assessment.core.orchestration.state import RunState
 from mdx_assessment.core.orchestration.tasks import TaskRegistry
@@ -45,9 +54,6 @@ logger = logging.getLogger(__name__)
 PROMPT_ID = "master_plan"
 PROMPT_VERSION = "v1"
 MAX_ATTEMPTS = 2
-
-FALLBACK_INVALID = "plan_invalid"
-FALLBACK_NO_FACTS = "no_facts"
 
 CHECK_IDS = ("P-1", "P-2", "P-3", "P-4")
 _MENTIONED_ID = re.compile(r"\b(?:fact|obs)-[a-z0-9]+(?:-[a-z0-9]+)*")
@@ -222,7 +228,7 @@ def _default_plan(
     return Plan(
         source=PlanSource.DEFAULT,
         steps=playbook.content.default_plan,
-        rationale=f"The playbook's default plan: Master planning did not succeed ({reason}).",
+        rationale=f"The playbook's default plan, used instead of Master planning ({reason}).",
         validation=PlanValidation(
             valid=False, checks=checks, attempts=attempts, errors=errors, fallback_reason=reason
         ),
@@ -230,15 +236,18 @@ def _default_plan(
 
 
 def master_plan_hook(runtime: SessionRuntime) -> PlanHook:
-    """The graph's `plan` hook. Needs the runtime's LLM gateway."""
-    if runtime.gateway is None:
-        raise ValueError("Master planning needs an LLM gateway")
-    gateway: LLMGateway = runtime.gateway
+    """The graph's `plan` hook. Needs the runtime's LLM gateway unless the LLM is off."""
+    gateway: LLMGateway | None = runtime.gateway
 
     async def plan(state: RunState) -> Plan:
         playbook = state.playbook
         if playbook is None:
             raise ValueError("Master planning needs a selected playbook")
+        if not state.llm_enabled:
+            logger.warning("session %s: using the default plan (LLM off)", state.session_id)
+            return _default_plan(playbook, FALLBACK_LLM_OFF, 0, {}, ())
+        if gateway is None:
+            raise ValueError("Master planning needs an LLM gateway")
         citable = state.run_context.citable_ids
         if not citable:  # a plan must cite facts, so a call could only fail
             logger.warning("session %s: using the default plan (no facts)", state.session_id)
@@ -259,6 +268,17 @@ def master_plan_hook(runtime: SessionRuntime) -> PlanHook:
                 )
             except LLMOutputError as exc:
                 report = PlanCheckReport(checks={}, errors=(f"output: {exc}",))
+            except LLMError as exc:
+                logger.exception(
+                    "session %s: using the default plan (model unavailable)", state.session_id
+                )
+                return _default_plan(
+                    playbook,
+                    FALLBACK_MODEL_UNAVAILABLE,
+                    attempt,
+                    {},
+                    (f"model unavailable: {type(exc).__name__}",),
+                )
             else:
                 output = result.output
                 report = validate_plan(output, playbook, citable, runtime.tasks)
