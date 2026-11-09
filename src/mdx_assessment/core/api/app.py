@@ -44,7 +44,7 @@ def create_app(
 
     @app.get("/health", tags=["meta"])
     def health() -> HealthResponse:
-        """Liveness. Dependency checks (database, Langfuse) are added with those stories."""
+        """Liveness. Dependency checks (database, MLflow) are added with those stories."""
         return HealthResponse()
 
     @app.get("/version", tags=["meta"])

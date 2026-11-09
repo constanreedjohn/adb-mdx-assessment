@@ -1,19 +1,16 @@
-"""Acceptance (E12-01): both endpoints on the simulated day, with Langfuse spans captured
+"""Acceptance (E12-01): both endpoints on the simulated day, with MLflow traces captured
 in memory. Everything real except the model and the database (see tests/persistence)."""
 
 import logging
-import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from langfuse import LangfuseOtelSpanAttributes
 from langgraph.checkpoint.memory import InMemorySaver
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic import SecretStr
+from tests.support import CapturedTraces
 
 from mdx_assessment.app import build_registries, load_config
 from mdx_assessment.core.api import create_app
@@ -25,18 +22,16 @@ from mdx_assessment.core.gateway import (
     create_llm_gateway,
 )
 from mdx_assessment.core.gateway.provider import LLMRequest
-from mdx_assessment.core.observability import Tracer, build_langfuse
+from mdx_assessment.core.observability import Tracer
 from mdx_assessment.core.orchestration.checkpoint import checkpoint_serializer
 from mdx_assessment.core.orchestration.playbooks import PlaybookStore, resolve_playbook
 from mdx_assessment.core.orchestration.session_service import SessionService
 from mdx_assessment.core.persistence import InMemoryAuditTrail
 from mdx_assessment.core.persistence.audit import AuditTrail
 from mdx_assessment.core.persistence.session_store import InMemorySessionStore
-from mdx_assessment.secret_store import SecretName
 from mdx_assessment.settings import (
     PROJECT_ROOT,
     AppSettings,
-    LangfuseSettings,
     Settings,
     get_settings,
 )
@@ -135,7 +130,7 @@ def test_post_then_get_on_the_simulated_day(client: TestClient, config: LoadedCo
         "llm_deployment": "fake",
         "ml_model": None,
     }
-    assert session["trace"]["langfuse_trace_id"]
+    assert session["trace"] is None  # no tracing in this client
 
 
 def test_a_rejected_plan_shows_the_marked_default_plan(
@@ -218,45 +213,19 @@ def test_bad_requests_are_rejected(client: TestClient, body: dict[str, Any]) -> 
     assert client.post("/sessions", json=body).status_code == 422
 
 
-# --- the Langfuse trace ---------------------------------------------------------------------
-
-
-class FakeSecrets:
-    backend = "fake"
-
-    def get(self, name: SecretName) -> SecretStr | None:
-        return SecretStr("sk-lf-test")
-
-    def require(self, name: SecretName) -> SecretStr:
-        raise NotImplementedError
-
-
-@pytest.fixture
-def traced() -> Iterator[tuple[Tracer, InMemorySpanExporter]]:
-    exporter = InMemorySpanExporter()
-    base = get_settings()
-    settings = base.model_copy(
-        update={
-            "langfuse": LangfuseSettings(
-                host="http://127.0.0.1:9", public_key=f"pk-lf-{uuid.uuid4().hex}", enabled=True
-            )
-        }
-    )
-    client = build_langfuse(settings, FakeSecrets(), span_exporter=exporter)
-    assert client is not None
-    yield Tracer(client), exporter
-    client.shutdown()
+# --- the MLflow trace -----------------------------------------------------------------------
 
 
 def test_one_trace_shows_every_node_tool_and_model_call(
-    config: LoadedConfig, settings: Settings, traced: tuple[Tracer, InMemorySpanExporter]
+    config: LoadedConfig, settings: Settings, captured_traces: CapturedTraces
 ) -> None:
-    tracer, exporter = traced
+    tracer, traces = captured_traces
     client = client_for(config, settings, valid_plan(config), tracer)
-    client.post("/sessions", json=BODY)
-    tracer.flush()
-    spans = exporter.get_finished_spans()
-    names = [s.name for s in spans]
+    started = client.post("/sessions", json=BODY).json()
+    assert started["trace_url"].startswith("http://mlflow.test/#/experiments/0/traces")
+
+    [trace] = traces
+    names = [s.name for s in trace.data.spans]
     for node in ("run_context", "select_playbook", "master_plan", "master_synthesize"):
         assert names.count(f"node:{node}") == 1
     assert names.count("node:dispatch") == names.count("node:review_point") == 3
@@ -264,22 +233,21 @@ def test_one_trace_shows_every_node_tool_and_model_call(
     assert "plan_validation" in names
     assert any(n.startswith("task:") for n in names)
     assert any("get_flags" in n for n in names)
-    assert len({s.context.trace_id for s in spans}) == 1
     assert names.count("assessment_session") == 1
-    ids = {s.context.span_id for s in spans}
-    children = [s for s in spans if s.name != "assessment_session"]
-    assert all(s.parent is not None and s.parent.span_id in ids for s in children)
+    ids = {s.span_id for s in trace.data.spans}
+    children = [s for s in trace.data.spans if s.name != "assessment_session"]
+    assert all(s.parent_id in ids for s in children)
+    assert trace.info.trace_metadata["mlflow.trace.session"] == started["session_id"]
+    assert trace.info.trace_id in started["trace_url"]
 
 
 def test_a_stopped_run_is_marked_as_an_error_in_the_trace(
-    config: LoadedConfig, settings: Settings, traced: tuple[Tracer, InMemorySpanExporter]
+    config: LoadedConfig, settings: Settings, captured_traces: CapturedTraces
 ) -> None:
-    tracer, exporter = traced
+    tracer, traces = captured_traces
     client = client_for(config, settings, valid_plan(config), tracer)
-    client.post("/sessions", json={**BODY, "data_type": "equity"})  # no facts can be read
-    tracer.flush()
-    level = LangfuseOtelSpanAttributes.OBSERVATION_LEVEL
-    errors = {
-        s.name for s in exporter.get_finished_spans() if (s.attributes or {}).get(level) == "ERROR"
-    }
+    client.post("/sessions", json={**BODY, "data_type": "equity"})
+    [trace] = traces
+    errors = {s.name for s in trace.data.spans if s.status.status_code == "ERROR"}
     assert {"assessment_session", "node:run_context"} <= errors
+    assert trace.info.state == "ERROR"

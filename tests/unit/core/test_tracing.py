@@ -1,40 +1,18 @@
-"""Tracing, offline: spans are captured in memory instead of sent to Langfuse."""
-
-import re
-import uuid
-from collections.abc import Iterator
+"""Tracing, offline: finished traces are captured instead of sent to an MLflow server."""
 
 import pytest
-from langfuse import Langfuse, LangfuseOtelSpanAttributes
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic import SecretStr
+from tests.support import CapturedTraces
 
-from mdx_assessment.core.observability import Tracer, build_langfuse, trace_id_for_session
-from mdx_assessment.secret_store import SecretName
-from mdx_assessment.settings import AppSettings, LangfuseSettings, Settings, get_settings
+from mdx_assessment.core.observability import MlflowTarget, Tracer, build_target
+from mdx_assessment.core.observability import tracing as tracing_module
+from mdx_assessment.settings import AppSettings, MLflowSettings, Settings, get_settings
 
 
-class FakeSecrets:
-    backend = "fake"
-
-    def __init__(self, langfuse_secret: str | None) -> None:
-        self._secret = langfuse_secret
-
-    def get(self, name: SecretName) -> SecretStr | None:
-        return SecretStr(self._secret) if self._secret else None
-
-    def require(self, name: SecretName) -> SecretStr:
-        raise NotImplementedError
-
-
-def settings_with(**langfuse: object) -> Settings:
-    base = get_settings()
-    return base.model_copy(
+def settings_with(*, enabled: bool = True, uri: str = "http://127.0.0.1:9") -> Settings:
+    return get_settings().model_copy(
         update={
-            "langfuse": LangfuseSettings.model_validate(
-                {"host": "http://127.0.0.1:9", "public_key": "", "enabled": True, **langfuse}
-            ),
-            "app": AppSettings(environment="test"),
+            "mlflow": MLflowSettings(tracking_uri=uri),
+            "app": AppSettings(environment="test", tracing_enabled=enabled),
         }
     )
 
@@ -42,18 +20,26 @@ def settings_with(**langfuse: object) -> Settings:
 # --- configuration ---------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("langfuse", "secret"),
-    [
-        ({"public_key": ""}, "sk-lf-x"),  # no public key
-        ({"public_key": "pk-lf-x", "enabled": False}, "sk-lf-x"),  # switched off
-        ({"public_key": "pk-lf-x"}, None),  # no secret key
-    ],
-)
-def test_tracing_is_off_unless_fully_configured(
-    langfuse: dict[str, object], secret: str | None
+def test_tracing_can_be_switched_off() -> None:
+    assert build_target(settings_with(enabled=False)) is None
+
+
+def test_an_unreachable_server_disables_tracing(caplog: pytest.LogCaptureFixture) -> None:
+    assert build_target(settings_with()) is None
+    assert "not reachable" in caplog.text
+
+
+def test_set_up_failure_disables_tracing(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    assert build_langfuse(settings_with(**langfuse), FakeSecrets(secret)) is None
+    def broken(name: str) -> None:
+        raise RuntimeError("no such thing")
+
+    monkeypatch.setattr(tracing_module, "_server_is_healthy", lambda uri: True)
+    monkeypatch.setattr(tracing_module.mlflow, "set_tracking_uri", lambda uri: None)
+    monkeypatch.setattr(tracing_module.mlflow, "set_experiment", broken)
+    assert build_target(settings_with()) is None
+    assert "tracing disabled" in caplog.text
 
 
 def test_disabled_tracer_is_a_working_no_op() -> None:
@@ -61,81 +47,118 @@ def test_disabled_tracer_is_a_working_no_op() -> None:
     assert not tracer.enabled
     with tracer.session_trace("sess-1") as handle, tracer.span("step") as span:
         assert span is None
-    assert handle.trace_id == trace_id_for_session("sess-1")
-    assert handle.url is None
-    assert tracer.auth_check() is False
+    with tracer.generation("llm", model="m") as generation:
+        assert generation is None
+    assert (handle.trace_id, handle.url, handle.root) == (None, None, None)
     tracer.flush()
-    tracer.shutdown()
 
 
-def test_trace_id_is_stable_per_session() -> None:
-    a = trace_id_for_session("sess-1")
-    assert re.fullmatch(r"[0-9a-f]{32}", a)
-    assert trace_id_for_session("sess-1") == a
-    assert trace_id_for_session("sess-2") != a
+# --- spans, captured ------------------------------------------------------------------------
 
 
-# --- spans, captured in memory ------------------------------------------------------------
-
-
-@pytest.fixture
-def captured() -> Iterator[tuple[Tracer, InMemorySpanExporter]]:
-    exporter = InMemorySpanExporter()
-    client = build_langfuse(
-        settings_with(
-            public_key=f"pk-lf-test-{uuid.uuid4()}"
-        ),  # unique: Langfuse caches clients per key
-        FakeSecrets("sk-lf-test"),
-        span_exporter=exporter,
-    )
-    assert isinstance(client, Langfuse)
-    tracer = Tracer(client)
-    yield tracer, exporter
-    tracer.shutdown()
-
-
-def test_one_session_is_one_trace(captured: tuple[Tracer, InMemorySpanExporter]) -> None:
-    tracer, exporter = captured
+def test_one_session_is_one_trace(captured_traces: CapturedTraces) -> None:
+    tracer, traces = captured_traces
     with tracer.session_trace("sess-42", input={"business_date": "2026-10-15"}) as handle:
         with tracer.span("validate_inputs"):
             pass
         with tracer.span("assess_movements"):
             pass
-    tracer.flush()
 
-    spans = {s.name: s for s in exporter.get_finished_spans()}
+    [trace] = traces
+    assert trace.info.trace_id == handle.trace_id
+    spans = {s.name: s for s in trace.data.spans}
     assert set(spans) == {"assessment_session", "validate_inputs", "assess_movements"}
-    trace_ids = {format(s.context.trace_id, "032x") for s in spans.values() if s.context}
-    assert trace_ids == {handle.trace_id} == {trace_id_for_session("sess-42")}
-
     root = spans["assessment_session"]
-    for child in ("validate_inputs", "assess_movements"):
-        parent = spans[child].parent
-        assert parent is not None and root.context is not None
-        assert parent.span_id == root.context.span_id
+    assert root.span_type == "AGENT"
+    assert root.inputs == {"business_date": "2026-10-15"}
+    assert spans["validate_inputs"].parent_id == root.span_id
+    assert spans["assess_movements"].parent_id == root.span_id
 
 
-def test_every_span_carries_the_session_and_environment(
-    captured: tuple[Tracer, InMemorySpanExporter],
-) -> None:
-    tracer, exporter = captured
-    with tracer.session_trace("sess-7", tags=["skeleton"]), tracer.span("step"):
+def test_trace_carries_the_session_environment_and_tags(captured_traces: CapturedTraces) -> None:
+    tracer, traces = captured_traces
+    with (
+        tracer.session_trace("sess-7", metadata={"config": "abc"}, tags={"data_type": "linear"}),
+        tracer.span("step"),
+    ):
         pass
-    tracer.flush()
-    for span in exporter.get_finished_spans():
-        attributes = span.attributes or {}
-        assert attributes.get(LangfuseOtelSpanAttributes.TRACE_SESSION_ID) == "sess-7"
-        assert attributes.get(LangfuseOtelSpanAttributes.ENVIRONMENT) == "test"
+    [trace] = traces
+    metadata = trace.info.trace_metadata
+    assert metadata["mlflow.trace.session"] == "sess-7"
+    assert metadata["environment"] == "test"
+    assert metadata["config"] == "abc"
+    assert trace.info.tags["data_type"] == "linear"
 
 
-def test_a_resumed_session_continues_the_same_trace(
-    captured: tuple[Tracer, InMemorySpanExporter],
-) -> None:
-    tracer, exporter = captured
+def test_a_session_run_twice_is_grouped_by_session(captured_traces: CapturedTraces) -> None:
+    tracer, traces = captured_traces
     for _ in range(2):  # e.g. interrupted, then resumed from the checkpoint
         with tracer.session_trace("sess-resume"), tracer.span("step"):
             pass
-    tracer.flush()
-    assert {
-        format(s.context.trace_id, "032x") for s in exporter.get_finished_spans() if s.context
-    } == {trace_id_for_session("sess-resume")}
+    assert len(traces) == 2
+    assert {t.info.trace_metadata["mlflow.trace.session"] for t in traces} == {"sess-resume"}
+
+
+def test_the_handle_links_to_the_trace(captured_traces: CapturedTraces) -> None:
+    tracer, _ = captured_traces
+    with tracer.session_trace("sess-1") as handle:
+        pass
+    assert handle.url == (
+        f"http://mlflow.test/#/experiments/0/traces?selectedEvaluationId={handle.trace_id}"
+    )
+
+
+def test_span_updates_are_recorded(captured_traces: CapturedTraces) -> None:
+    tracer, traces = captured_traces
+    with tracer.session_trace("sess-1") as handle:
+        with tracer.span("step", kind="chain", metadata={"step_id": "s1"}) as span:
+            assert span is not None
+            span.update(output={"n": 1})
+        with tracer.span("broken", kind="tool") as span:
+            assert span is not None
+            span.update(error="tool said no")
+        assert handle.root is not None
+        handle.root.update(error="the run stopped")
+    [trace] = traces
+    spans = {s.name: s for s in trace.data.spans}
+    assert spans["step"].span_type == "CHAIN"
+    assert spans["step"].outputs == {"n": 1}
+    assert spans["step"].attributes["step_id"] == "s1"
+    assert spans["step"].status.status_code == "OK"
+    assert spans["broken"].span_type == "TOOL"
+    assert spans["broken"].status.status_code == "ERROR"
+    assert spans["broken"].status.description == "tool said no"
+    assert trace.info.state == "ERROR"
+
+
+def test_a_model_call_records_model_prompt_and_tokens(captured_traces: CapturedTraces) -> None:
+    tracer, traces = captured_traces
+    with (
+        tracer.session_trace("sess-1"),
+        tracer.generation("llm:plan", model="gpt-x", version="v3", input={"q": 1}) as generation,
+    ):
+        assert generation is not None
+        generation.update(output={"a": 2}, model="gpt-x-2026", input_tokens=10, output_tokens=5)
+    [trace] = traces
+    span = next(s for s in trace.data.spans if s.name == "llm:plan")
+    assert span.span_type == "LLM"
+    assert span.attributes["mlflow.llm.model"] == "gpt-x-2026"
+    assert span.attributes["prompt_version"] == "v3"
+    assert span.attributes["mlflow.chat.tokenUsage"] == {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "total_tokens": 15,
+    }
+    assert trace.info.token_usage == {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+
+
+def test_a_crash_inside_a_span_marks_it_as_an_error(captured_traces: CapturedTraces) -> None:
+    tracer, traces = captured_traces
+    with pytest.raises(RuntimeError), tracer.session_trace("sess-1"), tracer.span("step"):
+        raise RuntimeError("boom")
+    [trace] = traces
+    assert next(s for s in trace.data.spans if s.name == "step").status.status_code == "ERROR"
+
+
+def test_target_is_plain_configuration() -> None:
+    assert Tracer(MlflowTarget(experiment_id="7", ui_url="http://x")).experiment_id == "7"

@@ -1,7 +1,7 @@
 # CI: lint, type-check and tests on every push to main and every pull request.
 #
 # No secrets are needed: LLM calls use the deterministic fake provider (MDX_LLM_PROVIDER=fake),
-# tracing is disabled, and tests marked `live` (real Azure OpenAI / Langfuse) are
+# tracing is disabled, and tests marked `live` (real Azure OpenAI / MLflow) are
 # excluded. Persistence tests run against the Postgres service container below,
 # and MDX_REQUIRE_DB=1 makes them fail (instead of skip) if it is unreachable.
 
@@ -48,7 +48,7 @@ jobs:
       POSTGRES_USER: mdx
       POSTGRES_PASSWORD: mdx
       MDX_REQUIRE_DB: "1"
-      LANGFUSE_ENABLED: "false"
+      MDX_TRACING_ENABLED: "false"
       MDX_LLM_PROVIDER: fake
       MDX_ENVIRONMENT: ci
 

@@ -40,7 +40,7 @@ class Versions(DomainModel):
 
 
 class TraceRef(DomainModel):
-    langfuse_trace_id: str
+    mlflow_trace_id: str
     url: str | None = None
 
 

@@ -19,6 +19,7 @@ up: ## Build and start the whole stack in Docker (API and Postgres)
 	@test -f .env || (echo "Missing .env: cp .env.example .env and fill it in." && exit 1)
 	$(COMPOSE) up -d --build --wait --wait-timeout 180
 	@echo "API      : http://127.0.0.1:$${API_PORT:-8000}/docs"
+	@echo "MLflow   : http://127.0.0.1:$${MLFLOW_PORT:-5001}"
 
 logs: ## Follow the API's log
 	$(COMPOSE) logs -f api
@@ -27,13 +28,13 @@ sim-docker: ## Generate a simulated MDX day from inside the API image, e.g. make
 	@test -n "$(DATE)" || (echo "Usage: make sim-docker DATE=YYYY-MM-DD [SEED=n]" && exit 1)
 	$(COMPOSE) run --rm --no-deps api python -m mdx_assessment.usecases.mdx.sim --date $(DATE) $(if $(SEED),--seed $(SEED),)
 
-dev: ## Start Postgres only and wait until healthy
+dev: ## Start Postgres and MLflow only, and wait until healthy
 	@test -f .env || (echo "Missing .env: cp .env.example .env and fill it in." && exit 1)
-	$(COMPOSE) up -d --wait --wait-timeout 120 postgres
+	$(COMPOSE) up -d --build --wait --wait-timeout 180 postgres mlflow
 	@$(COMPOSE) ps --format 'table {{.Service}}\t{{.Status}}'
 	@echo ""
 	@echo "Postgres : localhost:$${POSTGRES_PORT:-5432}"
-	@echo "Langfuse : Langfuse Cloud (LANGFUSE_HOST in .env)"
+	@echo "MLflow   : http://127.0.0.1:$${MLFLOW_PORT:-5001}"
 
 down: ## Stop local services (data is kept)
 	$(COMPOSE) down
@@ -44,7 +45,7 @@ dev-reset: ## Stop local services AND delete their data volume
 test: ## Run the test suite
 	$(UV) run pytest
 
-test-live: ## Also run tests that call live services (Azure OpenAI, Langfuse)
+test-live: ## Also run tests that call live services (Azure OpenAI, MLflow)
 	MDX_RUN_LIVE=1 $(UV) run pytest -m live
 
 lint: ## Lint, check formatting and type-check
@@ -75,7 +76,7 @@ sim: ## Generate a simulated MDX day, e.g. make sim DATE=2026-10-15 [SEED=7]
 	@test -n "$(DATE)" || (echo "Usage: make sim DATE=YYYY-MM-DD [SEED=n]" && exit 1)
 	$(UV) run python -m mdx_assessment.usecases.mdx.sim --date $(DATE) $(if $(SEED),--seed $(SEED),)
 
-smoke-trace: ## Send a test trace to Langfuse and confirm it was stored
+smoke-trace: ## Send a test trace to MLflow and confirm it was stored
 	$(UV) run python -m mdx_assessment.core.observability.smoke
 
 smoke-llm: ## One structured-output call to the Azure OpenAI deployment

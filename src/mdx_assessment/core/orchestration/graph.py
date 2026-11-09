@@ -21,7 +21,7 @@
 - **No facts stops the run.** If the source system can't be read at session start,
   there is nothing to check: the run ends `failed` with a notice for the analyst, and
   the full cause goes to the log.
-- **Tracing.** Every node is a span in the session's Langfuse trace.
+- **Tracing.** Every node is a span in the session's MLflow trace.
 - Every plan, task and decision is an audit event.
 """
 
@@ -182,7 +182,7 @@ def _traced(runtime: SessionRuntime, name: str, node: Node) -> Node:
                 span.update(output=to_jsonable_python(update, fallback=str))
                 failure = _failure_of(update)
                 if failure:
-                    span.update(level="ERROR", status_message=failure)
+                    span.update(error=failure)
             return update
 
     return traced

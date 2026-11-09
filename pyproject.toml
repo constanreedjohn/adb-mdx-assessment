@@ -3,15 +3,15 @@ name = "mdx-assessment"
 version = "0.1.0"
 description = "MDX Daily Validation Agent: supervised multi-agent exception assessment (PoC)"
 requires-python = ">=3.12,<3.13"
-# Majors are capped: the code is written against these APIs (mcp 2, openai 3, langfuse 5, langgraph 1).
+# Majors are capped: the code is written against these APIs (mcp 2, openai 3, mlflow 3, langgraph 1).
 dependencies = [
     "alembic>=1.14,<2",
     "azure-identity>=1.19,<2",
     "fastapi>=0.115",
-    "langfuse>=5.1,<6",
     "langgraph>=1.2.20,<2",
     "langgraph-checkpoint-postgres>=3.2,<4",
     "mcp>=2.3,<3",
+    "mlflow-tracing>=3.18,<4",
     "openai>=3.46,<4",
     "psycopg[binary]>=3.2,<4",
     "pydantic>=2.9,<3",
@@ -47,9 +47,10 @@ required-version = ">=0.13"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --import-mode=importlib"
+pythonpath = ["."]
 markers = [
     "db: needs PostgreSQL (skipped when unreachable, unless MDX_REQUIRE_DB=1)",
-    "live: calls a live external service (Azure OpenAI, Langfuse); run manually",
+    "live: calls a live external service (Azure OpenAI, MLflow); run manually",
 ]
 
 # --- ruff ---------------------------------------------------------------------
@@ -79,6 +80,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S105", "S106", "S108"]  # hardcoded test credentials and tmp paths
+"docker/**" = ["S104", "S606", "S607"]  # container entry points
 
 # --- mypy ---------------------------------------------------------------------
 [tool.mypy]

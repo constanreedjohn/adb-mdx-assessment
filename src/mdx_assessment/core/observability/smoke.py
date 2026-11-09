@@ -1,11 +1,10 @@
-"""`make smoke-trace`: send one test trace to Langfuse and confirm it was stored.
+"""`make smoke-trace`: send one test trace to MLflow and confirm it was stored.
 
-1. Check the keys (auth).
+1. Check the server responds.
 2. Open a session trace with one child span, then flush.
-3. Poll the Langfuse API until the trace's observations are visible (ingestion is
-   asynchronous), and print the trace URL.
+3. Search the server for the session until the trace's spans are visible.
 
-Exit code 0 on success, 1 otherwise. Never prints keys.
+Exit code 0 on success, 1 otherwise.
 """
 
 from __future__ import annotations
@@ -14,33 +13,31 @@ import sys
 import time
 from datetime import UTC, datetime
 
+import mlflow
+
 from mdx_assessment.core.observability.tracing import build_tracer
 from mdx_assessment.settings import get_settings
 
-POLL_SECONDS = 60.0
-POLL_INTERVAL = 3.0
+POLL_SECONDS = 30.0
+POLL_INTERVAL = 1.0
 
 
 def main() -> int:
     settings = get_settings()
     tracer = build_tracer(settings)
-    print(f"Langfuse host : {settings.langfuse.host}")
+    print(f"MLflow server : {settings.mlflow.tracking_uri}")
     print(f"Environment   : {settings.app.environment}")
-    if not tracer.enabled or tracer.client is None:
-        print("FAILED: Langfuse is not configured (LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY).")
+    if not tracer.enabled or tracer.experiment_id is None:
+        print("FAILED: MLflow is not reachable, or MDX_TRACING_ENABLED is false.")
         return 1
-    if not tracer.auth_check():
-        print("FAILED: Langfuse rejected the keys, or the host/region is wrong.")
-        return 1
-    print("Auth          : ok")
 
     session_id = "smoke-" + datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
     with (
         tracer.session_trace(
             session_id,
             name="smoke_test",
-            input={"purpose": "E4-03 tracing smoke test"},
-            tags=["smoke"],
+            input={"purpose": "tracing smoke test"},
+            tags={"purpose": "smoke"},
         ) as trace,
         tracer.span("smoke_child_step", input={"step": 1}) as span,
     ):
@@ -50,21 +47,24 @@ def main() -> int:
     print(f"Session       : {session_id}")
     print(f"Trace ID      : {trace.trace_id}")
 
+    expected = {"smoke_test", "smoke_child_step"}
+    names: set[str] = set()
     deadline = time.monotonic() + POLL_SECONDS
-    names: list[str] = []
-    while time.monotonic() < deadline:
-        response = tracer.client.api.observations.get_many(trace_id=trace.trace_id, limit=10)
-        names = sorted(o.name or "" for o in response.data)
-        if {"smoke_test", "smoke_child_step"} <= set(names):
-            break
-        time.sleep(POLL_INTERVAL)
-    tracer.shutdown()
+    while time.monotonic() < deadline and not expected <= names:
+        found = mlflow.search_traces(
+            locations=[tracer.experiment_id],
+            filter_string=f"metadata.`mlflow.trace.session` = '{session_id}'",
+            return_type="list",
+        )
+        names = {s.name for t in found for s in t.data.spans}
+        if not expected <= names:
+            time.sleep(POLL_INTERVAL)
 
-    if {"smoke_test", "smoke_child_step"} <= set(names):
-        print(f"Stored        : yes ({', '.join(names)})")
+    if expected <= names:
+        print(f"Stored        : yes ({', '.join(sorted(names))})")
         print(f"Open          : {trace.url}")
         return 0
-    print(f"FAILED: trace not visible in Langfuse after {POLL_SECONDS:.0f}s (seen: {names}).")
+    print(f"FAILED: trace not visible in MLflow after {POLL_SECONDS:.0f}s (seen: {sorted(names)}).")
     return 1
 
 

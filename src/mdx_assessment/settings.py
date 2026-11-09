@@ -61,12 +61,16 @@ class AppSettings(BaseSettings):
     """Versioned configuration: playbooks, profiles, manifests, prompts (E1-06)."""
     data_dir: Path = PROJECT_ROOT / "data"
     """Local data: simulated ADB days live in `<data_dir>/sim/<business date>/` (git-ignored)."""
+    tracing_enabled: bool = True
+    """Send run traces to MLflow. Off in CI."""
+    trace_experiment: str = "mdx-sessions"
+    """The MLflow experiment that holds the run traces."""
     log_dir: Path = PROJECT_ROOT / "log"
     """One file per app run: `<log_dir>/app-<UTC start time>.log` (git-ignored)."""
     secrets_backend: SecretsBackend = SecretsBackend.ENV
     """Where secrets come from; see `mdx_assessment.secret_store`."""
     environment: str = Field(default="local", pattern=r"^[a-z0-9][a-z0-9_-]{0,39}$")
-    """Deployment label on traces, e.g. local, ci, poc (Langfuse environment)."""
+    """Deployment label on traces, e.g. local, ci, poc."""
     llm_provider: LLMProviderKind = LLMProviderKind.AZURE_OPENAI
     """Which model the LLM gateway talks to (E5-02)."""
 
@@ -113,28 +117,12 @@ class PostgresSettings(BaseSettings):
         )
 
 
-class LangfuseSettings(BaseSettings):
-    model_config = _config("LANGFUSE_")
-
-    host: str = "http://localhost:3000"
-    public_key: str = ""
-    secret_key: SecretStr | None = None
-    enabled: bool = True
-
-    @property
-    def is_configured(self) -> bool:
-        return bool(
-            self.enabled
-            and self.public_key
-            and self.secret_key
-            and self.secret_key.get_secret_value()
-        )
-
-
 class MLflowSettings(BaseSettings):
     model_config = _config("MLFLOW_")
 
     tracking_uri: str = "http://localhost:5001"
+    ui_url: str = ""
+    """The address a browser uses for trace links, if different from `tracking_uri`."""
 
 
 class AzurePlatformSettings(BaseSettings):
@@ -158,7 +146,6 @@ class Settings(BaseModel):
     app: AppSettings
     azure_openai: AzureOpenAISettings
     postgres: PostgresSettings
-    langfuse: LangfuseSettings
     mlflow: MLflowSettings
     azure: AzurePlatformSettings
     app_insights: AppInsightsSettings
@@ -175,7 +162,6 @@ def get_settings() -> Settings:
         app=_load(AppSettings),
         azure_openai=_load(AzureOpenAISettings),
         postgres=_load(PostgresSettings),
-        langfuse=_load(LangfuseSettings),
         mlflow=_load(MLflowSettings),
         azure=_load(AzurePlatformSettings),
         app_insights=_load(AppInsightsSettings),

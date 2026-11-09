@@ -1,15 +1,12 @@
 """LLM gateway with the fake provider (and stub providers for edge cases). No network."""
 
 import json
-import uuid
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Literal
 
 import pytest
-from langfuse import Langfuse, LangfuseOtelSpanAttributes
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel, ConfigDict, Field
+from tests.support import CapturedTraces
 
 from mdx_assessment.core.gateway import (
     FakeProvider,
@@ -235,30 +232,18 @@ def test_fake_provider_selected_by_setting() -> None:
     assert isinstance(create_provider(settings), FakeProvider)
 
 
-@pytest.fixture
-def captured_tracer() -> Iterator[tuple[Tracer, InMemorySpanExporter]]:
-    exporter = InMemorySpanExporter()
-    client = Langfuse(
-        public_key=f"pk-lf-test-{uuid.uuid4()}",
-        secret_key="sk-lf-test",
-        base_url="http://127.0.0.1:9",
-        span_exporter=exporter,
-    )
-    tracer = Tracer(client)
-    yield tracer, exporter
-    tracer.shutdown()
-
-
-async def test_each_call_is_a_generation(
+async def test_each_call_is_an_llm_span(
     prompts: PromptStore,
     audit: InMemoryAuditTrail,
-    captured_tracer: tuple[Tracer, InMemorySpanExporter],
+    captured_traces: CapturedTraces,
 ) -> None:
-    tracer, exporter = captured_tracer
+    tracer, traces = captured_traces
     fake = FakeProvider({"classify": {"label": "monitor", "confidence": 0.5}})
-    await classify(gateway(fake, prompts, audit, tracer))
-    tracer.flush()
-    [span] = [s for s in exporter.get_finished_spans() if s.name == "llm:classify"]
-    attributes = span.attributes or {}
-    assert attributes.get(LangfuseOtelSpanAttributes.OBSERVATION_TYPE) == "generation"
-    assert attributes.get(LangfuseOtelSpanAttributes.VERSION) == "v1"
+    with tracer.session_trace("s1"):
+        await classify(gateway(fake, prompts, audit, tracer))
+    [span] = [s for t in traces for s in t.data.spans if s.name == "llm:classify"]
+    assert span.span_type == "LLM"
+    assert span.attributes["prompt_version"] == "v1"
+    assert span.attributes["mlflow.llm.model"] == "fake-model"
+    assert span.attributes["mlflow.chat.tokenUsage"]["total_tokens"] > 0
+    assert span.outputs == {"label": "monitor", "confidence": 0.5}

@@ -1,13 +1,13 @@
-# Local stack: the API and PostgreSQL 16 (cases store, audit trail, LangGraph checkpoints).
+# Local stack: the API, MLflow (run traces) and PostgreSQL 16 (cases store, audit trail,
+# LangGraph checkpoints, and MLflow's own database).
 #
 #   make up         build and start everything, and wait until healthy
 #   make logs       follow the API's log
-#   make dev        start Postgres only (when running the API or tests from the host)
+#   make dev        start Postgres and MLflow only (when running the API from the host)
 #   make down       stop (data is kept in the named volume)
 #   make dev-reset  stop and delete the data volume
 #
-# Values come from `.env`. Ports are bound to 127.0.0.1 only. Tracing goes to Langfuse
-# Cloud (LANGFUSE_HOST in .env), so no Langfuse services run locally.
+# Values come from `.env`. Ports are bound to 127.0.0.1 only, and traces stay on this machine.
 
 name: mdx-assessment
 
@@ -22,8 +22,12 @@ services:
       MDX_CONFIG_DIR: /app/config
       MDX_DATA_DIR: /app/data
       MDX_LOG_DIR: /app/log
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_UI_URL: http://127.0.0.1:${MLFLOW_PORT:-5001} # the address a browser uses
     depends_on:
       postgres:
+        condition: service_healthy
+      mlflow:
         condition: service_healthy
     ports:
       - 127.0.0.1:${API_PORT:-8000}:8000
@@ -40,6 +44,33 @@ services:
       timeout: 3s
       retries: 20
       start_period: 5s
+
+  mlflow:
+    build: docker/mlflow
+    restart: unless-stopped
+    environment: # only what it needs: no model keys in this container
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:${MLFLOW_PORT:-5001}:5000 # 5000 is often taken on macOS (AirPlay)
+    volumes:
+      - mlflow_artifacts:/mlflow/artifacts
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request as u; u.urlopen('http://127.0.0.1:5000/health', timeout=2)
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 10s
 
   postgres:
     image: docker.io/postgres:16
@@ -62,3 +93,4 @@ services:
 
 volumes:
   postgres_data:
+  mlflow_artifacts:

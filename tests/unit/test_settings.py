@@ -15,12 +15,10 @@ def env_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "AZURE_OPENAI_DEPLOYMENT=gpt-test\n"
         "POSTGRES_HOST=db.local\n"
         "POSTGRES_PASSWORD=pw\n"
-        "LANGFUSE_PUBLIC_KEY=pk\n"
-        "LANGFUSE_SECRET_KEY=sk\n"
     )
     monkeypatch.setenv("MDX_ENV_FILE", str(path))
     for key in list(os.environ):
-        if key.startswith(("AZURE_", "POSTGRES_", "LANGFUSE_", "MLFLOW_")):
+        if key.startswith(("AZURE_", "POSTGRES_", "MLFLOW_")):
             monkeypatch.delenv(key)
     settings_mod.get_settings.cache_clear()
     yield path
@@ -33,7 +31,6 @@ def test_reads_values_from_env_file(env_file: Path) -> None:
     assert s.azure_openai.deployment == "gpt-test"
     assert s.azure_openai.is_configured
     assert s.postgres.url() == "postgresql+psycopg://mdx:pw@db.local:5432/mdx_assessment"
-    assert s.langfuse.is_configured
 
 
 def test_env_file_does_not_mutate_os_environ(env_file: Path) -> None:

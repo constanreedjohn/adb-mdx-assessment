@@ -1,17 +1,15 @@
 """Tool client wrapper, with a toy tool: permissions, budgets, one audit event per call, tracing."""
 
 import asyncio
-import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 import pytest
-from langfuse import Langfuse, LangfuseOtelSpanAttributes
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel, ValidationError
+from tests.support import CapturedTraces
 
 from mdx_assessment.core.config import LoadedConfig
 from mdx_assessment.core.domain.canonical import content_hash
@@ -298,28 +296,15 @@ def test_registry_rejects_duplicates_and_empty_tools(calls: list[str]) -> None:
 # --- tracing: one tool span per call -----------------------------------------------------------
 
 
-@pytest.fixture
-def captured_tracer() -> Iterator[tuple[Tracer, InMemorySpanExporter]]:
-    exporter = InMemorySpanExporter()
-    client = Langfuse(
-        public_key=f"pk-lf-test-{uuid.uuid4()}",
-        secret_key="sk-lf-test",
-        base_url="http://127.0.0.1:9",
-        span_exporter=exporter,
-    )
-    tracer = Tracer(client)
-    yield tracer, exporter
-    tracer.shutdown()
-
-
 async def test_each_call_is_a_tool_span(
     calls: list[str],
     audit: InMemoryAuditTrail,
-    captured_tracer: tuple[Tracer, InMemorySpanExporter],
+    captured_traces: CapturedTraces,
 ) -> None:
-    tracer, exporter = captured_tracer
-    async with make_hub(calls, audit, tracer) as hub:
-        await hub.client("reader", session_id="s1", task_id="t1").call("toy", "peek", {"x": 1})
-    tracer.flush()
-    [span] = [s for s in exporter.get_finished_spans() if s.name == "toy.peek"]
-    assert (span.attributes or {}).get(LangfuseOtelSpanAttributes.OBSERVATION_TYPE) == "tool"
+    tracer, traces = captured_traces
+    with tracer.session_trace("s1"):
+        async with make_hub(calls, audit, tracer) as hub:
+            await hub.client("reader", session_id="s1", task_id="t1").call("toy", "peek", {"x": 1})
+    [span] = [s for t in traces for s in t.data.spans if s.name == "toy.peek"]
+    assert span.span_type == "TOOL"
+    assert span.inputs == {"x": 1}

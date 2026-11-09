@@ -1,11 +1,12 @@
-"""Langfuse tracing and OpenTelemetry hooks."""
+"""Tracing with self-hosted MLflow."""
 
 from mdx_assessment.core.observability.tracing import (
+    MlflowTarget,
     TraceHandle,
     Tracer,
-    build_langfuse,
+    TraceSpan,
+    build_target,
     build_tracer,
-    trace_id_for_session,
 )
 
-__all__ = ["TraceHandle", "Tracer", "build_langfuse", "build_tracer", "trace_id_for_session"]
+__all__ = ["MlflowTarget", "TraceHandle", "TraceSpan", "Tracer", "build_target", "build_tracer"]

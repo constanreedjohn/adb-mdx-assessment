@@ -146,7 +146,7 @@ SAMPLES: list[BaseModel] = [
     STEP,
     PLAN,
     VALIDATION,
-    TraceRef(langfuse_trace_id="abc", url=None),
+    TraceRef(mlflow_trace_id="abc", url=None),
     TASK,
     CHECK,
     DECISION,

@@ -16,7 +16,7 @@ from mdx_assessment.secret_store import (
     get_secrets_provider,
 )
 
-PREFIXES = ("AZURE_", "POSTGRES_", "LANGFUSE_", "MLFLOW_", "APPLICATIONINSIGHTS_", "MDX_")
+PREFIXES = ("AZURE_", "POSTGRES_", "MLFLOW_", "APPLICATIONINSIGHTS_", "MDX_")
 
 
 @pytest.fixture
@@ -25,7 +25,7 @@ def env_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     path.write_text(
         "AZURE_OPENAI_API_KEY=azure-secret\n"
         "POSTGRES_PASSWORD=pg-secret\n"
-        "LANGFUSE_SECRET_KEY=\n"  # present but empty: treated as not set
+        "APPLICATIONINSIGHTS_CONNECTION_STRING=\n"  # present but empty: treated as not set
     )
     for key in list(os.environ):
         if key.startswith(PREFIXES):
@@ -53,13 +53,12 @@ def test_reads_secrets_by_logical_name(env_file: Path) -> None:
 
 def test_unset_and_empty_secrets_are_none(env_file: Path) -> None:
     provider = get_secrets_provider()
-    assert provider.get(SecretName.LANGFUSE_SECRET_KEY) is None  # empty in .env
-    assert provider.get(SecretName.APPINSIGHTS_CONNECTION_STRING) is None  # absent
+    assert provider.get(SecretName.APPINSIGHTS_CONNECTION_STRING) is None  # empty in .env
 
 
 def test_require_names_the_secret_but_never_a_value(env_file: Path) -> None:
-    with pytest.raises(MissingSecretError, match="'langfuse-secret-key' is not set"):
-        get_secrets_provider().require(SecretName.LANGFUSE_SECRET_KEY)
+    with pytest.raises(MissingSecretError, match="'appinsights-connection-string' is not set"):
+        get_secrets_provider().require(SecretName.APPINSIGHTS_CONNECTION_STRING)
 
 
 def test_environment_variable_overrides_env_file(

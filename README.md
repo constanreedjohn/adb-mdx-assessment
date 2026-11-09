@@ -4,7 +4,7 @@ A supervised multi-agent proof of concept for daily market data validation. Code
 
 ## Run it in Docker
 
-Docker runs the API and PostgreSQL. Tracing goes to Langfuse Cloud, so no Langfuse containers run locally.
+Docker runs the API, MLflow and PostgreSQL. MLflow is self-hosted, so run traces stay on your machine.
 
 ### Before you start
 
@@ -20,14 +20,13 @@ Fill in `.env`:
 | --- | --- |
 | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_DEPLOYMENT` | Required: the Master Agent's planning call |
 | `AZURE_OPENAI_API_VERSION` | Required: must be a version your deployment supports |
-| `LANGFUSE_HOST`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | Optional: tracing is skipped while the keys are empty. The host must match your project's region |
 
 `.env` is git-ignored and is never copied into the image.
 
 ### Start a run
 
 ```bash
-# 1. Build and start the API and Postgres. Migrations run on start.
+# 1. Build and start the API, MLflow and Postgres. Migrations run on start.
 make up
 
 # 2. Generate a simulated MDX day (writes to data/sim/2026-10-15/)
@@ -50,7 +49,7 @@ The interactive API docs are at <http://127.0.0.1:8000/docs>.
 | --- | --- |
 | `make logs` | The API's log, live |
 | `log/app-<UTC start time>.log` | The same log, one file per app run. Files survive rebuilds and are not cleaned up automatically |
-| Langfuse (`trace_url` from step 3) | One trace per session: every graph node, tool call and model call |
+| MLflow (`trace_url` from step 3, or <http://127.0.0.1:5001>, experiment `mdx-sessions`, Traces tab) | One trace per session: every graph node, tool call and model call, with model and token usage |
 | `GET /sessions/<session_id>` | Facts, selected playbook, plan and its validation, execution log |
 
 ### Session status
@@ -77,7 +76,7 @@ If port 8000 is taken, use another one, and change the port in the `curl` comman
 API_PORT=8001 make up
 ```
 
-To change the host's Postgres port, set `POSTGRES_PORT` in `.env`.
+To change the host's Postgres or MLflow port, set `POSTGRES_PORT` or `MLFLOW_PORT` in `.env`.
 
 ## Make commands
 
@@ -87,10 +86,10 @@ Run `make help` to print this list from the Makefile.
 
 | Command | What it does |
 | --- | --- |
-| `make up` | Builds and starts the API and Postgres, and waits until they are healthy |
+| `make up` | Builds and starts the API, MLflow and Postgres, and waits until they are healthy |
 | `make logs` | Follows the API's log |
 | `make sim-docker DATE=2026-10-15 [SEED=7]` | Generates a simulated MDX day from inside the API image |
-| `make dev` | Starts Postgres only, for running the API or tests on your machine |
+| `make dev` | Starts Postgres and MLflow only, for running the API or tests on your machine |
 | `make down` | Stops the containers and keeps the data |
 | `make dev-reset` | Stops the containers and deletes the database volume |
 
@@ -109,7 +108,7 @@ These need [uv](https://docs.astral.sh/uv/) 0.13 or newer. Python 3.12 is used f
 | Command | What it does |
 | --- | --- |
 | `make test` | Runs the test suite. Database tests are skipped if Postgres isn't running |
-| `make test-live` | Runs only the tests that call Azure OpenAI and Langfuse. Uses your real credentials |
+| `make test-live` | Runs only the tests that call Azure OpenAI and MLflow. Uses your real credentials, and needs MLflow running |
 | `make lint` | Runs ruff (lint and format check) and `mypy --strict` |
 | `make fmt` | Formats the code and applies safe lint fixes |
 | `make typecheck` | Runs `mypy --strict` only |
@@ -126,4 +125,4 @@ These need [uv](https://docs.astral.sh/uv/) 0.13 or newer. Python 3.12 is used f
 | Command | What it does |
 | --- | --- |
 | `make smoke-llm` | Makes one structured-output call to your Azure OpenAI deployment |
-| `make smoke-trace` | Sends a test trace to Langfuse and confirms it was stored |
+| `make smoke-trace` | Sends a test trace to MLflow and confirms it was stored |

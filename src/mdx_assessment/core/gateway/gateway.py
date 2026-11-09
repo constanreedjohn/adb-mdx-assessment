@@ -13,7 +13,7 @@ What every call gets, whichever provider (Azure OpenAI, or the fake in CI):
   the prompt text.
 - **Structured output with allowed values**: the reply is parsed into `output_model`
   and validated again through it, so `Literal`/`Enum` fields and validators always apply.
-- **Logging**: one audit event (`llm_call`) and one Langfuse generation per call, with
+- **Logging**: one audit event (`llm_call`) and one trace span per call, with
   provider, deployment, model, prompt version, tokens and latency.
 
 Added in SP3: evidence citation and number matching (E5-03); untrusted-content
@@ -132,7 +132,8 @@ class LLMGateway:
                     generation.update(
                         output=output.model_dump(mode="json"),
                         model=model,
-                        usage_details={"input": tokens_in, "output": tokens_out},
+                        input_tokens=tokens_in,
+                        output_tokens=tokens_out,
                     )
             outcome = "ok"
             return GatewayResult(

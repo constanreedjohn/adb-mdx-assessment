@@ -1,7 +1,7 @@
 """Runs one session end to end and keeps its result (plan §2.4).
 
 Everything a run needs is opened for that run: a tool hub, a checkpointer, and one
-Langfuse trace around the whole graph. The session row is written when the run starts
+MLflow trace around the whole graph. The session row is written when the run starts
 and replaced with the final state when it ends.
 
 A crash inside the run is logged in full and stored as a `failed` session, so a caller
@@ -46,6 +46,7 @@ from mdx_assessment.settings import Settings
 
 logger = logging.getLogger(__name__)
 
+TRACE_FLUSH_SECONDS = 10
 UNEXPECTED_FAILURE_NOTICE = (
     "This run stopped because of an unexpected error. A developer needs to look at it, "
     "then the run can be started again."
@@ -106,7 +107,7 @@ class SessionService:
                 versions=versions,
             ),
         )
-        if self._tracer is None:
+        if self._tracer is None or not self._tracer.enabled:  # MLflow may be back by now
             self._tracer = self._make_tracer()
         tracer = self._tracer
 
@@ -118,7 +119,7 @@ class SessionService:
                 "llm_enabled": llm_enabled,
             },
             metadata={"config_version": self._config.version},
-            tags=[data_type],
+            tags={"data_type": data_type},
         ) as trace:
             try:
                 final = await self._run(initial, tracer)
@@ -133,9 +134,17 @@ class SessionService:
             result = self._result(final, started_at, trace)
             self._close_trace(trace, result)
         await asyncio.to_thread(self._store.save, result)
-        await asyncio.to_thread(tracer.flush)
+        await self._flush(tracer)
         logger.info("session %s finished: %s", session_id, result.status.value)
         return result
+
+    @staticmethod
+    async def _flush(tracer: Tracer) -> None:
+        """Have the trace visible when the caller gets its answer, without waiting on a sick server."""
+        try:
+            await asyncio.wait_for(asyncio.to_thread(tracer.flush), TRACE_FLUSH_SECONDS)
+        except Exception:
+            logger.warning("could not flush traces", exc_info=True)
 
     def get(self, session_id: str) -> SessionResult | None:
         return self._store.get(session_id)
@@ -209,7 +218,9 @@ class SessionService:
             run_opinion=state.run_opinion,
             fallbacks=tuple(state.fallbacks),
             analyst_notice=state.analyst_notice,
-            trace=TraceRef(langfuse_trace_id=trace.trace_id, url=trace.url),
+            trace=TraceRef(mlflow_trace_id=trace.trace_id, url=trace.url)
+            if trace.trace_id
+            else None,
         )
 
     @staticmethod
@@ -226,4 +237,4 @@ class SessionService:
             }
         )
         if result.status is SessionStatus.FAILED:
-            trace.root.update(level="ERROR", status_message=result.analyst_notice)
+            trace.root.update(error=result.analyst_notice)

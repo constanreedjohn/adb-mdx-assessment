@@ -11,7 +11,7 @@ Every call goes through four steps, in order:
 2. **Budget**: at most `max_calls` calls and `max_seconds` of wall time per task;
    otherwise `BudgetExceededError`. A call that would outlast the remaining time is
    cut off and counts as over budget.
-3. **Call** through MCP, inside a Langfuse "tool" span.
+3. **Call** through MCP, inside a "tool" trace span.
 4. **Audit**: exactly one audit event per attempt (allowed, denied or failed) with
    the tool, operation, a SHA-256 of the arguments (not the arguments themselves),
    the outcome, result size and latency.
@@ -241,7 +241,7 @@ class AgentToolClient:
             if span is not None:
                 span.update(
                     output=result.structured_content,
-                    level="ERROR" if result.is_error else "DEFAULT",
+                    error="the tool reported an error" if result.is_error else None,
                 )
             return result
 

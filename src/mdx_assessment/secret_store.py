@@ -36,7 +36,6 @@ class SecretName(StrEnum):
 
     AZURE_OPENAI_API_KEY = "azure-openai-api-key"
     POSTGRES_PASSWORD = "postgres-password"  # noqa: S105
-    LANGFUSE_SECRET_KEY = "langfuse-secret-key"  # noqa: S105
     APPINSIGHTS_CONNECTION_STRING = "appinsights-connection-string"
 
 
@@ -69,7 +68,6 @@ class EnvSecretsProvider:
         self._lookup: dict[SecretName, Callable[[], SecretStr | None]] = {
             SecretName.AZURE_OPENAI_API_KEY: lambda: settings.azure_openai.api_key,
             SecretName.POSTGRES_PASSWORD: lambda: settings.postgres.password,
-            SecretName.LANGFUSE_SECRET_KEY: lambda: settings.langfuse.secret_key,
             SecretName.APPINSIGHTS_CONNECTION_STRING: lambda: (
                 settings.app_insights.connection_string
             ),
