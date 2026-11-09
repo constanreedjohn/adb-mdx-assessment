@@ -264,6 +264,17 @@ def master_plan_hook(runtime: SessionRuntime) -> PlanHook:
                 report = validate_plan(output, playbook, citable, runtime.tasks)
 
             dumped = output.model_dump(mode="json") if output is not None else None
+            with runtime.tracer.span(
+                "plan_validation", input=dumped, metadata={"attempt": attempt}
+            ) as span:
+                if span is not None:
+                    span.update(
+                        output={
+                            "valid": report.valid,
+                            "checks": report.checks,
+                            "errors": list(report.errors),
+                        }
+                    )
             logger.info(
                 "session %s plan attempt %d: valid=%s checks=%s errors=%s output=%s",
                 state.session_id,

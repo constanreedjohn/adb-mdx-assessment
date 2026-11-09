@@ -19,6 +19,7 @@ build/
 # Tooling / local data
 mlruns/
 data/sim/
+log/
 .DS_Store
 .idea/
 .vscode/

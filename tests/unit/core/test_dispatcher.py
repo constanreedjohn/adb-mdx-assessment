@@ -1,5 +1,6 @@
 """The plan-driven dispatcher and review points, with toy tasks (no use-case pack, no tools)."""
 
+import logging
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -186,6 +187,21 @@ async def test_a_failed_step_is_flagged_and_the_run_completes(bad_task: str, err
     assert final.fallbacks == ["step_failed:s2"]
 
 
+async def test_a_crash_is_logged_with_its_traceback(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.ERROR, logger="mdx_assessment.core.orchestration.graph"):
+        await run(plan_of("toy.explode"))
+    assert "step s1 (toy.explode) crashed" in caplog.text
+    assert "RuntimeError: tool unreachable" in caplog.text
+    assert "Traceback" in caplog.text
+
+
+async def test_invalid_output_names_the_fields(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.ERROR, logger="mdx_assessment.core.orchestration.graph"):
+        final, _ = await run(plan_of("toy.wrong_type"))
+    assert "n: Field required" in (final.execution[0].error or "")
+    assert "returned invalid output: n: Field required" in caplog.text
+
+
 # --- review points ---------------------------------------------------------------------------
 
 
@@ -224,14 +240,20 @@ async def test_hooks_fill_the_state() -> None:
     assert events[:3] == ["run_context", "playbook_selected", "plan"]
 
 
-async def test_failing_to_gather_facts_does_not_stop_the_run() -> None:
+async def test_failing_to_gather_facts_stops_the_run(caplog: pytest.LogCaptureFixture) -> None:
     async def broken(state: RunState) -> RunContext:
         raise RuntimeError("MDX is down")
 
-    final, _ = await run(plan_of("toy.produce"), {"gather_context": broken})
-    assert final.run_context == RunContext()
-    assert final.fallbacks == ["run_context_failed:RuntimeError"]
-    assert [e.status for e in final.execution] == [TaskStatus.DONE]
+    with caplog.at_level(logging.ERROR, logger="mdx_assessment.core.orchestration.graph"):
+        final, audit = await run(plan_of("toy.produce"), {"gather_context": broken})
+    assert final.status is SessionStatus.FAILED
+    assert final.analyst_notice is not None and "source system" in final.analyst_notice
+    assert "MDX is down" not in final.analyst_notice
+    assert final.execution == []
+    assert final.plan is None
+    assert "MDX is down" in caplog.text
+    assert "Traceback" in caplog.text
+    assert audit.read() == []
 
 
 async def test_an_empty_plan_goes_straight_to_synthesis() -> None:

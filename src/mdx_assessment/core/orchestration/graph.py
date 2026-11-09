@@ -15,8 +15,10 @@
 - **Safe failure.** An unknown task, a crash or invalid output fails that step only:
   it is recorded with its error, flagged at its review point, and the run continues
   and completes, marked degraded (PDF §3.3).
-- **Runtime errors stop the run.** If the model is unreachable after its retries, no
-  LLM or analyst can fix that: the run ends `failed` with a notice for the analyst.
+- **Runtime errors stop the run.** If the source system or the model is unreachable,
+  no LLM or analyst can fix that: the run ends `failed` with a notice for the analyst,
+  and the full cause goes to the log.
+- **Tracing.** Every node is a span in the session's Langfuse trace.
 - Every plan, task and decision is an audit event.
 """
 
@@ -25,13 +27,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from langgraph.graph import END, START, StateGraph
 from pydantic import JsonValue, ValidationError
+from pydantic_core import to_jsonable_python
 
 from mdx_assessment.core.domain import (
     Decision,
@@ -61,6 +64,11 @@ logger = logging.getLogger(__name__)
 
 MASTER_AGENT = "master_agent"
 ORCHESTRATOR = "orchestrator"
+FACTS_UNAVAILABLE_NOTICE = (
+    "This run stopped because the day's facts could not be read from the source system. "
+    "No checks were completed. A developer needs to fix the connection, then the run can "
+    "be started again."
+)
 MODEL_UNAVAILABLE_NOTICE = (
     "This run stopped because the AI model could not be reached. No checks were completed. "
     "A developer needs to fix the connection, then the run can be started again."
@@ -72,6 +80,10 @@ PlaybookHook = Callable[[RunState], Awaitable[ResolvedPlaybook | None]]
 PlanHook = Callable[[RunState], Awaitable[Plan]]
 DecideHook = Callable[[RunState, ExecutionEntry, list[ReviewCheckResult]], Awaitable[Decision]]
 SynthesizeHook = Callable[[RunState], Awaitable[dict[str, JsonValue] | None]]
+
+
+class Node(Protocol):
+    def __call__(self, state: RunState) -> Awaitable[dict[str, Any]]: ...
 
 
 async def _no_context(state: RunState) -> RunContext:
@@ -131,17 +143,40 @@ class SessionRuntime:
         await asyncio.to_thread(self.audit.append, event)
 
 
+def _failure_of(update: Mapping[str, Any]) -> str | None:
+    """What went wrong in this node, for marking its span as an error."""
+    if update.get("status") is SessionStatus.FAILED:
+        return str(update.get("analyst_notice"))
+    return next((e.error for e in update.get("execution", ()) if e.error), None)
+
+
+def _traced(runtime: SessionRuntime, name: str, node: Node) -> Node:
+    """Run `node` inside a span, with what it returned as the span's output."""
+
+    async def traced(state: RunState) -> dict[str, Any]:
+        with runtime.tracer.span(
+            f"node:{name}", kind="chain", input={"next_step": state.next_step}
+        ) as span:
+            update = await node(state)
+            if span is not None:
+                span.update(output=to_jsonable_python(update, fallback=str))
+                failure = _failure_of(update)
+                if failure:
+                    span.update(level="ERROR", status_message=failure)
+            return update
+
+    return traced
+
+
 def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGraph[RunState]:
     """The graph for one session. Compile it with a checkpointer to run or resume."""
 
     async def run_context(state: RunState) -> dict[str, Any]:
-        update: dict[str, Any] = {}
         try:
             context = await hooks.gather_context(state)
-        except Exception as exc:  # safe failure: no facts, so the default playbook is selected
-            context = RunContext()
-            update["fallbacks"] = [f"run_context_failed:{type(exc).__name__}"]
-        update["run_context"] = context
+        except Exception:
+            logger.exception("session %s stopped: could not gather the facts", state.session_id)
+            return {"status": SessionStatus.FAILED, "analyst_notice": FACTS_UNAVAILABLE_NOTICE}
         await runtime.record(
             state,
             ORCHESTRATOR,
@@ -151,7 +186,7 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
                 "observations": [o.model_dump(mode="json") for o in context.observations],
             },
         )
-        return update
+        return {"run_context": context}
 
     async def select_playbook(state: RunState) -> dict[str, Any]:
         playbook = await hooks.select_playbook(state)
@@ -172,8 +207,8 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
     async def master_plan(state: RunState) -> dict[str, Any]:
         try:
             plan = await hooks.plan(state)
-        except LLMError as exc:
-            logger.error("session %s stopped: model unavailable: %s", state.session_id, exc)
+        except LLMError:
+            logger.exception("session %s stopped: model unavailable", state.session_id)
             return {"status": SessionStatus.FAILED, "analyst_notice": MODEL_UNAVAILABLE_NOTICE}
         await runtime.record(
             state,
@@ -199,6 +234,7 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
         definition = runtime.tasks.get(step.task)
         if definition is None:
             status, error = TaskStatus.FAILED, f"unknown task {step.task!r}"
+            logger.error("session %s step %s failed: %s", state.session_id, step.step_id, error)
         else:
             context = TaskContext(
                 inputs=TaskInput(
@@ -230,9 +266,23 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
                     mode="json"
                 )
             except ValidationError as exc:
-                status, error = TaskStatus.FAILED, f"invalid output: {exc.error_count()} error(s)"
+                fields = "; ".join(
+                    f"{'.'.join(map(str, e['loc'])) or '(output)'}: {e['msg']}"
+                    for e in exc.errors()
+                )
+                status, error = TaskStatus.FAILED, f"invalid output: {fields}"[:500]
+                logger.exception(
+                    "session %s step %s (%s) returned invalid output: %s",
+                    state.session_id,
+                    step.step_id,
+                    step.task,
+                    fields,
+                )
             except Exception as exc:
                 status, error = TaskStatus.FAILED, f"{type(exc).__name__}: {exc}"[:500]
+                logger.exception(
+                    "session %s step %s (%s) crashed", state.session_id, step.step_id, step.task
+                )
 
         entry = ExecutionEntry(
             step_id=step.step_id,
@@ -300,6 +350,9 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
         await runtime.record(state, MASTER_AGENT, "session_completed", payload)
         return update
 
+    def after_run_context(state: RunState) -> Literal["select_playbook", "__end__"]:
+        return "__end__" if state.status is SessionStatus.FAILED else "select_playbook"
+
     def after_plan(state: RunState) -> Literal["dispatch", "master_synthesize", "__end__"]:
         if state.status is SessionStatus.FAILED:
             return "__end__"
@@ -310,14 +363,14 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
         return "dispatch" if state.next_step < len(state.plan.steps) else "master_synthesize"
 
     graph: StateGraph[RunState] = StateGraph(RunState)
-    graph.add_node("run_context", run_context)
-    graph.add_node("select_playbook", select_playbook)
-    graph.add_node("master_plan", master_plan)
-    graph.add_node("dispatch", dispatch)
-    graph.add_node("review_point", review_point)
-    graph.add_node("master_synthesize", master_synthesize)
+    graph.add_node("run_context", _traced(runtime, "run_context", run_context))
+    graph.add_node("select_playbook", _traced(runtime, "select_playbook", select_playbook))
+    graph.add_node("master_plan", _traced(runtime, "master_plan", master_plan))
+    graph.add_node("dispatch", _traced(runtime, "dispatch", dispatch))
+    graph.add_node("review_point", _traced(runtime, "review_point", review_point))
+    graph.add_node("master_synthesize", _traced(runtime, "master_synthesize", master_synthesize))
     graph.add_edge(START, "run_context")
-    graph.add_edge("run_context", "select_playbook")
+    graph.add_conditional_edges("run_context", after_run_context)
     graph.add_edge("select_playbook", "master_plan")
     graph.add_conditional_edges("master_plan", after_plan)
     graph.add_edge("dispatch", "review_point")

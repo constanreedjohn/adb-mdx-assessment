@@ -12,13 +12,14 @@ from datetime import date
 from enum import StrEnum
 from typing import Self
 
-from pydantic import AwareDatetime, Field, model_validator
+from pydantic import AwareDatetime, Field, JsonValue, model_validator
 
 from mdx_assessment.core.domain.base import DomainModel
 from mdx_assessment.core.domain.evidence import NonEmptyStr
 from mdx_assessment.core.domain.findings import Finding
 from mdx_assessment.core.domain.planning import Plan, Task
 from mdx_assessment.core.domain.review import Decision, ReviewCheckResult
+from mdx_assessment.core.domain.run_context import RunContext
 
 
 class SessionStatus(StrEnum):
@@ -38,6 +39,11 @@ class Versions(DomainModel):
     ml_model: str | None = None
 
 
+class TraceRef(DomainModel):
+    langfuse_trace_id: str
+    url: str | None = None
+
+
 class SessionResult(DomainModel):
     session_id: NonEmptyStr
     business_date: date
@@ -46,12 +52,18 @@ class SessionResult(DomainModel):
     started_at: AwareDatetime
     finished_at: AwareDatetime | None = None
     versions: Versions = Field(default_factory=Versions)
+    run_context: RunContext = Field(default_factory=RunContext)
+    playbook: dict[str, JsonValue] | None = None
     plan: Plan | None = None
-    tasks: tuple[Task, ...] = ()
+    execution: tuple[Task, ...] = ()
+    agent_results: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
     review_checks: tuple[ReviewCheckResult, ...] = ()
     decisions: tuple[Decision, ...] = ()
     findings: tuple[Finding, ...] = ()
+    run_opinion: dict[str, JsonValue] | None = None
     fallbacks: tuple[str, ...] = ()
+    analyst_notice: str | None = None
+    trace: TraceRef | None = None
 
     @model_validator(mode="after")
     def _consistent(self) -> Self:

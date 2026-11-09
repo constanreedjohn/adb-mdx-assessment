@@ -18,7 +18,17 @@ from fastapi import FastAPI
 
 from mdx_assessment.core.api import create_app
 from mdx_assessment.core.config import ConfigError, LoadedConfig
+from mdx_assessment.core.observability.log_file import LOG_FORMAT, file_log_lifespan
+from mdx_assessment.core.orchestration.checkpoint import open_checkpointer
 from mdx_assessment.core.orchestration.playbooks import PlaybookStore
+from mdx_assessment.core.orchestration.session_service import SessionService
+from mdx_assessment.core.persistence import (
+    PostgresAuditTrail,
+    create_db_engine,
+    create_session_factory,
+    database_url,
+)
+from mdx_assessment.core.persistence.session_store import PostgresSessionStore
 from mdx_assessment.core.platform import PlatformRegistries, create_platform_registries
 from mdx_assessment.core.tools.permissions import PERMISSIONS_PATH, PermissionMatrix
 from mdx_assessment.settings import get_settings
@@ -30,7 +40,7 @@ def configure_logging() -> None:
     logger = logging.getLogger("mdx_assessment")
     if not logger.handlers:
         handler = logging.StreamHandler(sys.stderr)
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        handler.setFormatter(logging.Formatter(LOG_FORMAT))
         logger.addHandler(handler)
     logger.setLevel(logging.INFO)
 
@@ -55,10 +65,27 @@ def load_config(config_dir: Path | None = None) -> LoadedConfig:
     return config
 
 
+def build_session_service(config: LoadedConfig) -> SessionService:
+    """Nothing connects to the database until the first session starts."""
+    engine = create_db_engine()
+    return SessionService(
+        registries=build_registries(),
+        config=config,
+        settings=get_settings(),
+        store=PostgresSessionStore(create_session_factory(engine)),
+        audit=PostgresAuditTrail(engine),
+        checkpointer=lambda: open_checkpointer(database_url()),
+    )
+
+
 def build_app(config_dir: Path | None = None) -> FastAPI:
     configure_logging()
     config = load_config(config_dir)
-    return create_app(config_version=config.version)
+    return create_app(
+        config_version=config.version,
+        sessions=build_session_service(config),
+        lifespan=file_log_lifespan(get_settings().app.log_dir),
+    )
 
 
 app = build_app()

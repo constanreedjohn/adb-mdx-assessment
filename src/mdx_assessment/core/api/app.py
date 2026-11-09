@@ -12,7 +12,10 @@ from typing import Literal
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from mdx_assessment.core.api.sessions import create_sessions_router
 from mdx_assessment.core.meta import DIST_NAME, app_version
+from mdx_assessment.core.observability.log_file import Lifespan
+from mdx_assessment.core.orchestration.session_service import SessionService
 
 
 class HealthResponse(BaseModel):
@@ -26,11 +29,17 @@ class VersionResponse(BaseModel):
     """Content hash of `config/` (E1-06), as recorded by every session."""
 
 
-def create_app(*, config_version: str | None = None) -> FastAPI:
+def create_app(
+    *,
+    config_version: str | None = None,
+    sessions: SessionService | None = None,
+    lifespan: Lifespan | None = None,
+) -> FastAPI:
     app = FastAPI(
         title="MDX Daily Validation Agent",
         version=app_version(),
         summary="Supervised multi-agent exception assessment (PoC). Raw JSON endpoints.",
+        lifespan=lifespan,
     )
 
     @app.get("/health", tags=["meta"])
@@ -42,4 +51,6 @@ def create_app(*, config_version: str | None = None) -> FastAPI:
     def get_version() -> VersionResponse:
         return VersionResponse(app=DIST_NAME, version=app_version(), config_version=config_version)
 
+    if sessions is not None:
+        app.include_router(create_sessions_router(sessions))
     return app

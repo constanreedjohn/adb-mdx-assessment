@@ -1,16 +1,46 @@
-# Local development stack: PostgreSQL 16 (cases store, audit trail, LangGraph checkpoints).
+# Local stack: the API and PostgreSQL 16 (cases store, audit trail, LangGraph checkpoints).
 #
-#   make dev        start and wait until healthy
+#   make up         build and start everything, and wait until healthy
+#   make logs       follow the API's log
+#   make dev        start Postgres only (when running the API or tests from the host)
 #   make down       stop (data is kept in the named volume)
 #   make dev-reset  stop and delete the data volume
 #
-# Values come from `.env` (compose reads it automatically). The port is bound to
-# 127.0.0.1 only. Tracing goes to Langfuse Cloud (LANGFUSE_HOST in .env), so no
-# Langfuse services run locally.
+# Values come from `.env`. Ports are bound to 127.0.0.1 only. Tracing goes to Langfuse
+# Cloud (LANGFUSE_HOST in .env), so no Langfuse services run locally.
 
 name: mdx-assessment
 
 services:
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres # the compose service, not the host's localhost
+      POSTGRES_PORT: "5432"
+      MDX_CONFIG_DIR: /app/config
+      MDX_DATA_DIR: /app/data
+      MDX_LOG_DIR: /app/log
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:${API_PORT:-8000}:8000
+    volumes:
+      - ./data:/app/data # simulated days, shared with `make sim-docker`
+      - ./log:/app/log # one log file per app run; survives rebuilds
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health', timeout=2)
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
   postgres:
     image: docker.io/postgres:16
     restart: unless-stopped

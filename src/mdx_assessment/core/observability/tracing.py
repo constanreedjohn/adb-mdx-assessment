@@ -10,8 +10,8 @@
   key) every method is a no-op. The SDK exports in the background, so a Langfuse
   outage only costs traces, not the session.
 
-E4-04 adds spans for every graph node and tool call, and generations for LLM calls,
-using `span()` inside `session_trace()`.
+Graph nodes and tool calls are spans, and LLM calls are generations, all opened inside
+`session_trace()`.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from typing import Any, Literal
 
 from langfuse import (
     Langfuse,
+    LangfuseAgent,
     LangfuseChain,
     LangfuseGeneration,
     LangfuseSpan,
@@ -54,6 +55,7 @@ class TraceHandle:
 
     trace_id: str
     url: str | None  # link to the trace in Langfuse; None when tracing is disabled
+    root: LangfuseAgent | None = None  # the root span, to record the session's outcome
 
 
 class Tracer:
@@ -88,10 +90,10 @@ class Tracer:
                 as_type="agent",
                 input=input,
                 metadata=metadata,
-            ),
+            ) as root,
             propagate_attributes(session_id=session_id, trace_name=name, tags=tags),
         ):
-            yield TraceHandle(trace_id=trace_id, url=self._trace_url(trace_id))
+            yield TraceHandle(trace_id=trace_id, url=self._trace_url(trace_id), root=root)
 
     @contextmanager
     def span(

@@ -36,6 +36,7 @@ from mdx_assessment.core.domain import (
     Severity,
     Task,
     TaskStatus,
+    TraceRef,
     Versions,
 )
 from mdx_assessment.usecases.mdx.domain import (
@@ -145,6 +146,7 @@ SAMPLES: list[BaseModel] = [
     STEP,
     PLAN,
     VALIDATION,
+    TraceRef(langfuse_trace_id="abc", url=None),
     TASK,
     CHECK,
     DECISION,
@@ -158,7 +160,7 @@ SAMPLES: list[BaseModel] = [
         finished_at=T1,
         versions=Versions(config="sha256:abc"),
         plan=PLAN,
-        tasks=(TASK,),
+        execution=(TASK,),
         review_checks=(CHECK,),
         decisions=(DECISION,),
         findings=(FINDING,),

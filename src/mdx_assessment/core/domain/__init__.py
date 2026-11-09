@@ -21,7 +21,7 @@ from mdx_assessment.core.domain.planning import (
 )
 from mdx_assessment.core.domain.review import Decision, DecisionKind, ReviewCheckResult
 from mdx_assessment.core.domain.run_context import Fact, RunContext, RunObservation
-from mdx_assessment.core.domain.session import SessionResult, SessionStatus, Versions
+from mdx_assessment.core.domain.session import SessionResult, SessionStatus, TraceRef, Versions
 
 __all__ = [
     "GENESIS_HASH",
@@ -48,6 +48,7 @@ __all__ = [
     "Severity",
     "Task",
     "TaskStatus",
+    "TraceRef",
     "Versions",
     "canonical_json",
     "compute_evidence_id",

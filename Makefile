@@ -2,7 +2,7 @@
 # Every Python command runs through `uv run`, so the locked environment is always used.
 
 .DEFAULT_GOAL := help
-.PHONY: help install dev down dev-reset test test-live lint fmt typecheck migrate migration api sim smoke-trace smoke-llm
+.PHONY: help install up logs sim-docker dev down dev-reset test test-live lint fmt typecheck migrate migration api sim smoke-trace smoke-llm
 
 UV ?= uv
 
@@ -15,9 +15,21 @@ install: ## Install dependencies and pre-commit hooks
 
 COMPOSE ?= docker compose
 
-dev: ## Start local services (Postgres) and wait until healthy
+up: ## Build and start the whole stack in Docker (API and Postgres)
 	@test -f .env || (echo "Missing .env: cp .env.example .env and fill it in." && exit 1)
-	$(COMPOSE) up -d --wait --wait-timeout 120
+	$(COMPOSE) up -d --build --wait --wait-timeout 180
+	@echo "API      : http://127.0.0.1:$${API_PORT:-8000}/docs"
+
+logs: ## Follow the API's log
+	$(COMPOSE) logs -f api
+
+sim-docker: ## Generate a simulated MDX day from inside the API image, e.g. make sim-docker DATE=2026-10-15
+	@test -n "$(DATE)" || (echo "Usage: make sim-docker DATE=YYYY-MM-DD [SEED=n]" && exit 1)
+	$(COMPOSE) run --rm --no-deps api python -m mdx_assessment.usecases.mdx.sim --date $(DATE) $(if $(SEED),--seed $(SEED),)
+
+dev: ## Start Postgres only and wait until healthy
+	@test -f .env || (echo "Missing .env: cp .env.example .env and fill it in." && exit 1)
+	$(COMPOSE) up -d --wait --wait-timeout 120 postgres
 	@$(COMPOSE) ps --format 'table {{.Service}}\t{{.Status}}'
 	@echo ""
 	@echo "Postgres : localhost:$${POSTGRES_PORT:-5432}"
