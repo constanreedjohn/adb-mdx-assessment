@@ -6,6 +6,7 @@ Filled in as each piece lands:
 - E3-01/E3-03: MDX data tool (simulated backend); its permission row is in config/permissions.yaml
 - E6-02: agents and stub tasks `input_validation.check_files_and_intake`,
   `market_data.near_zero_check`, `escalation_reporting.record_cases` (agents/skeleton.py)
+- E6-03: run-context facts (facts.py) and their settings (`run_context.yaml`)
 """
 
 from __future__ import annotations
@@ -18,9 +19,12 @@ from mdx_assessment.usecases.mdx.agents.skeleton import register_skeleton
 from mdx_assessment.usecases.mdx.config import (
     DATA_TYPES_PATH,
     EXPECTED_FILES_PATH,
+    RUN_CONTEXT_PATH,
     DataTypeProfiles,
     ExpectedFiles,
+    RunContextSettings,
 )
+from mdx_assessment.usecases.mdx.facts import build_mdx_facts
 from mdx_assessment.usecases.mdx.sim.config import SIM_LINEAR_DAY_PATH, SimLinearDay
 from mdx_assessment.usecases.mdx.tools.mdx import (
     MDX_TOOL_SPEC,
@@ -46,4 +50,6 @@ def register(registries: PlatformRegistries) -> None:
     # Simulator settings: optional, so a deployment on real data needs no sim config.
     registries.config.register(SIM_LINEAR_DAY_PATH, SimLinearDay, owner=USE_CASE_ID, required=False)
     registries.tools.register(MDX_TOOL_SPEC, _mdx_server)
+    registries.config.register(RUN_CONTEXT_PATH, RunContextSettings, owner=USE_CASE_ID)
+    registries.facts = build_mdx_facts
     register_skeleton(registries)

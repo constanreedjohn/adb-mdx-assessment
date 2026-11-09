@@ -13,6 +13,7 @@ from mdx_assessment.core.domain.evidence import Evidence, EvidenceId, compute_ev
 from mdx_assessment.core.domain.findings import Finding, Measure, Severity
 from mdx_assessment.core.domain.planning import Plan, PlanSource, PlanStep, Task, TaskStatus
 from mdx_assessment.core.domain.review import Decision, DecisionKind, ReviewCheckResult
+from mdx_assessment.core.domain.run_context import Fact, RunContext, RunObservation
 from mdx_assessment.core.domain.session import SessionResult, SessionStatus, Versions
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "DomainModel",
     "Evidence",
     "EvidenceId",
+    "Fact",
     "Finding",
     "Measure",
     "NewAuditEvent",
@@ -31,6 +33,8 @@ __all__ = [
     "PlanSource",
     "PlanStep",
     "ReviewCheckResult",
+    "RunContext",
+    "RunObservation",
     "SessionResult",
     "SessionStatus",
     "Severity",

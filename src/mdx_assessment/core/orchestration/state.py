@@ -5,9 +5,8 @@ Agents hand work to each other through this state; the dispatcher (E6-02) moves 
 checkpointed to PostgreSQL after every step, so an interrupted session resumes where
 it stopped without repeating a step.
 
-Fields typed loosely for now get their own models when their story lands:
-`run_context` and `playbook` (E6-03), `run_opinion` (E10-02). Use-case results live in
-`agent_results` as JSON, so core never needs a pack's types.
+`run_opinion` is typed loosely until its story lands (E10-02). Use-case results live
+in `agent_results` as JSON, so core never needs a pack's types.
 
 List fields use an "append" reducer: a node returns only its new items, and LangGraph
 adds them to what is already there. `agent_results` merges by key (step ID).
@@ -26,10 +25,12 @@ from mdx_assessment.core.domain import (
     DomainModel,
     Plan,
     ReviewCheckResult,
+    RunContext,
     SessionStatus,
     TaskStatus,
     Versions,
 )
+from mdx_assessment.core.orchestration.playbooks import ResolvedPlaybook
 
 
 def merge_results(
@@ -66,10 +67,10 @@ class RunState(BaseModel):
     data_type: str = Field(min_length=1)
     versions: Versions = Field(default_factory=Versions)
 
-    run_context: dict[str, JsonValue] = Field(default_factory=dict)
-    """Facts and observations gathered by code at session start (typed in E6-03)."""
-    playbook: dict[str, JsonValue] | None = None
-    """Selected playbook and its selection record (typed in E6-03)."""
+    run_context: RunContext = Field(default_factory=RunContext)
+    """Facts and observations gathered by code at session start."""
+    playbook: ResolvedPlaybook | None = None
+    """The selected playbook and its selection record."""
 
     plan: Plan | None = None
     next_step: int = Field(default=0, ge=0)

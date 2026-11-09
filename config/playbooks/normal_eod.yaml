@@ -1,12 +1,34 @@
-# Normal end-of-day playbook (owner: core). The default playbook (plan §2.5).
-# Placeholder in SP1: SP2 (E6-03) adds mandatory steps, allowed follow-ups,
-# limits, the default plan, `selected_when` and precedence.
+# Normal end-of-day playbook (owner: core; plan §2.5, PDF §2.1). The default playbook.
+# Phase 1: no follow-ups are allowed yet. The bounded investigation loop is switched
+# on in SP9 (E10-08), when this playbook gains its PDF follow-ups: compare a file with
+# the prior day's, fetch longer history or related curves, re-assess one item.
 
 id: normal_eod
 version: "1"
 title: Normal end-of-day
-status: placeholder
 description: >-
-  Input validation, market data assessment, escalation and reporting, then review.
-  Follow-ups: compare a file with the prior day's, fetch longer history or related
-  curves, re-assess one item.
+  Input validation, market data assessment, escalation and reporting, with a review
+  point after each step and the Master Agent's review and run opinion at the end.
+
+selected_when:
+  default: true
+precedence: 4         # lowest priority: runs when no other playbook's rule holds
+
+# Every plan must include these tasks: every dataset assessed, every output reviewed.
+mandatory_steps:
+  - input_validation.check_files_and_intake
+  - market_data.near_zero_check
+  - escalation_reporting.record_cases
+
+allowed_follow_ups: []
+
+limits:
+  max_follow_up_rounds: 0
+  max_run_seconds: 600
+  max_ai_explanations: 100
+
+# Runs when Master planning fails (PDF §3.3 safe failure; plan D-10).
+default_plan:
+  - {step_id: validate_inputs, task: input_validation.check_files_and_intake}
+  - {step_id: assess_movements, task: market_data.near_zero_check}
+  - {step_id: record_cases, task: escalation_reporting.record_cases}

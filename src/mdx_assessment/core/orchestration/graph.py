@@ -36,11 +36,13 @@ from mdx_assessment.core.domain import (
     NewAuditEvent,
     Plan,
     ReviewCheckResult,
+    RunContext,
     SessionStatus,
     TaskStatus,
 )
 from mdx_assessment.core.gateway.gateway import LLMGateway
 from mdx_assessment.core.observability.tracing import Tracer
+from mdx_assessment.core.orchestration.playbooks import ResolvedPlaybook
 from mdx_assessment.core.orchestration.state import ExecutionEntry, RunState
 from mdx_assessment.core.orchestration.tasks import (
     ReviewCheckRegistry,
@@ -55,18 +57,18 @@ MASTER_AGENT = "master_agent"
 ORCHESTRATOR = "orchestrator"
 Clock = Callable[[], datetime]
 
-ContextHook = Callable[[RunState], Awaitable[dict[str, JsonValue]]]
-PlaybookHook = Callable[[RunState], Awaitable[dict[str, JsonValue] | None]]
+ContextHook = Callable[[RunState], Awaitable[RunContext]]
+PlaybookHook = Callable[[RunState], Awaitable[ResolvedPlaybook | None]]
 PlanHook = Callable[[RunState], Awaitable[Plan]]
 DecideHook = Callable[[RunState, ExecutionEntry, list[ReviewCheckResult]], Awaitable[Decision]]
 SynthesizeHook = Callable[[RunState], Awaitable[dict[str, JsonValue] | None]]
 
 
-async def _no_context(state: RunState) -> dict[str, JsonValue]:
-    return {}
+async def _no_context(state: RunState) -> RunContext:
+    return RunContext()
 
 
-async def _no_playbook(state: RunState) -> dict[str, JsonValue] | None:
+async def _no_playbook(state: RunState) -> ResolvedPlaybook | None:
     return None
 
 
@@ -123,10 +125,39 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
     """The graph for one session. Compile it with a checkpointer to run or resume."""
 
     async def run_context(state: RunState) -> dict[str, Any]:
-        return {"run_context": await hooks.gather_context(state)}
+        update: dict[str, Any] = {}
+        try:
+            context = await hooks.gather_context(state)
+        except Exception as exc:  # safe failure: no facts, so the default playbook is selected
+            context = RunContext()
+            update["fallbacks"] = [f"run_context_failed:{type(exc).__name__}"]
+        update["run_context"] = context
+        await runtime.record(
+            state,
+            ORCHESTRATOR,
+            "run_context",
+            {
+                "facts": [f.model_dump(mode="json") for f in context.facts],
+                "observations": [o.model_dump(mode="json") for o in context.observations],
+            },
+        )
+        return update
 
     async def select_playbook(state: RunState) -> dict[str, Any]:
-        return {"playbook": await hooks.select_playbook(state)}
+        playbook = await hooks.select_playbook(state)
+        if playbook is not None:
+            await runtime.record(
+                state,
+                ORCHESTRATOR,
+                "playbook_selected",
+                {
+                    "playbook": playbook.id,
+                    "version": playbook.version,
+                    "selected_by": playbook.selected_by,
+                    "selection": playbook.selection.model_dump(mode="json"),
+                },
+            )
+        return {"playbook": playbook}
 
     async def master_plan(state: RunState) -> dict[str, Any]:
         plan = await hooks.plan(state)

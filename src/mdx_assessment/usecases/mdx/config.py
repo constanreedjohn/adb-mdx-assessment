@@ -19,6 +19,7 @@ from mdx_assessment.usecases.mdx.domain import DataType, MarketDataKind, Unit
 
 DATA_TYPES_PATH = "profiles/data_types.yaml"
 EXPECTED_FILES_PATH = "expected_files.yaml"
+RUN_CONTEXT_PATH = "run_context.yaml"
 
 Identifier = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$")]
 
@@ -127,3 +128,13 @@ class ExpectedFiles(DomainModel):
 
     def for_data_type(self, data_type: DataType) -> tuple[ExpectedFile, ...]:
         return tuple(f for f in self.files if f.data_type is data_type)
+
+
+# --- run_context.yaml --------------------------------------------------------------
+
+
+class RunContextSettings(DomainModel):
+    high_volume_flag_threshold: int = Field(gt=0)
+    provisional: bool = False
+    """True while a value is a placeholder awaiting ADB confirmation."""
+    note: str = ""

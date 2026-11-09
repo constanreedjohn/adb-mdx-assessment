@@ -105,6 +105,15 @@ def test_allow_list_is_derived_from_the_state() -> None:
         "Decision",
         "DecisionKind",
         "SessionStatus",
+        # E6-03: facts and the selected playbook
+        "RunContext",
+        "Fact",
+        "RunObservation",
+        "ResolvedPlaybook",
+        "SelectionRecord",
+        "RuleOutcome",
+        "PlaybookContent",
+        "PlaybookLimits",
     }
 
 

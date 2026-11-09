@@ -9,15 +9,23 @@ from pydantic import BaseModel, JsonValue
 
 from mdx_assessment.core.domain import (
     DecisionKind,
+    Fact,
     Plan,
     PlanSource,
     PlanStep,
     ReviewCheckResult,
+    RunContext,
     SessionStatus,
     TaskStatus,
 )
 from mdx_assessment.core.orchestration.checkpoint import checkpoint_serializer, thread_config
 from mdx_assessment.core.orchestration.graph import GraphHooks, SessionRuntime, build_session_graph
+from mdx_assessment.core.orchestration.playbooks import (
+    PlaybookContent,
+    PlaybookLimits,
+    ResolvedPlaybook,
+    SelectionRecord,
+)
 from mdx_assessment.core.orchestration.state import ExecutionEntry, RunState
 from mdx_assessment.core.orchestration.tasks import (
     AgentDefinition,
@@ -33,6 +41,19 @@ from mdx_assessment.core.persistence import InMemoryAuditTrail
 
 pytestmark = pytest.mark.anyio
 T0 = datetime(2026, 10, 15, 9, 20, tzinfo=UTC)
+PLAYBOOK = ResolvedPlaybook(
+    id="normal",
+    version="1",
+    selection=SelectionRecord(rules=()),
+    content=PlaybookContent(
+        title="Normal",
+        description="",
+        mandatory_steps=("toy.produce",),
+        allowed_follow_ups=(),
+        limits=PlaybookLimits(max_follow_up_rounds=0, max_run_seconds=60, max_ai_explanations=1),
+        default_plan=(PlanStep(step_id="s1", task="toy.produce"),),
+    ),
+)
 
 
 @pytest.fixture
@@ -130,6 +151,7 @@ async def test_three_steps_run_in_order_and_are_logged() -> None:
     assert final.status is SessionStatus.COMPLETED
     assert final.next_step == 3
     assert [e.event_type for e in audit.read()] == [
+        "run_context",
         "plan",
         "task_completed",
         "decision",
@@ -180,22 +202,36 @@ async def test_registered_checks_run_at_the_review_point() -> None:
 
 
 async def test_hooks_fill_the_state() -> None:
-    async def context(state: RunState) -> dict[str, JsonValue]:
-        return {"flag_count": 28}
+    fact = Fact.create("flag_count", 28, source="test", scope={})
 
-    async def playbook(state: RunState) -> dict[str, JsonValue] | None:
-        return {"id": "normal_eod"}
+    async def context(state: RunState) -> RunContext:
+        return RunContext(facts=(fact,))
+
+    async def playbook(state: RunState) -> ResolvedPlaybook | None:
+        return PLAYBOOK
 
     async def opinion(state: RunState) -> dict[str, JsonValue] | None:
         return {"summary": f"{len(state.execution)} steps"}
 
-    final, _ = await run(
+    final, audit = await run(
         plan_of("toy.produce"),
         {"gather_context": context, "select_playbook": playbook, "synthesize": opinion},
     )
-    assert final.run_context == {"flag_count": 28}
-    assert final.playbook == {"id": "normal_eod"}
+    assert final.run_context.fact("flag_count") == fact
+    assert final.playbook == PLAYBOOK
     assert final.run_opinion == {"summary": "1 steps"}
+    events = [e.event_type for e in audit.read()]
+    assert events[:3] == ["run_context", "playbook_selected", "plan"]
+
+
+async def test_failing_to_gather_facts_does_not_stop_the_run() -> None:
+    async def broken(state: RunState) -> RunContext:
+        raise RuntimeError("MDX is down")
+
+    final, _ = await run(plan_of("toy.produce"), {"gather_context": broken})
+    assert final.run_context == RunContext()
+    assert final.fallbacks == ["run_context_failed:RuntimeError"]
+    assert [e.status for e in final.execution] == [TaskStatus.DONE]
 
 
 async def test_an_empty_plan_goes_straight_to_synthesis() -> None:
@@ -204,7 +240,7 @@ async def test_an_empty_plan_goes_straight_to_synthesis() -> None:
     )
     assert final.execution == []
     assert final.status is SessionStatus.COMPLETED
-    assert [e.event_type for e in audit.read()] == ["plan", "session_completed"]
+    assert [e.event_type for e in audit.read()] == ["run_context", "plan", "session_completed"]
 
 
 # --- registry consistency -----------------------------------------------------------------------

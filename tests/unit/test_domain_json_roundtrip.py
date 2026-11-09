@@ -20,6 +20,7 @@ from mdx_assessment.core.domain import (
     DecisionKind,
     DomainModel,
     Evidence,
+    Fact,
     Finding,
     Measure,
     NewAuditEvent,
@@ -27,6 +28,8 @@ from mdx_assessment.core.domain import (
     PlanSource,
     PlanStep,
     ReviewCheckResult,
+    RunContext,
+    RunObservation,
     SessionResult,
     SessionStatus,
     Severity,
@@ -101,7 +104,21 @@ NEW_EVENT = NewAuditEvent(
     session_id="sess-1", actor="master_agent", event_type="plan", payload={"steps": 3, "ok": True}
 )
 
+FACT = Fact.create(
+    "flag_count",
+    28,
+    threshold=300,
+    source="mdx_data.get_flags",
+    scope={"business_date": "2026-10-15"},
+)
+OBSERVATION = RunObservation(
+    id="obs-late-file", text="File late, inside grace period", fact_ids=(FACT.id,)
+)
+
 SAMPLES: list[BaseModel] = [
+    FACT,
+    OBSERVATION,
+    RunContext(facts=(FACT,), observations=(OBSERVATION,)),
     NEW_EVENT,
     AuditEvent(
         seq=1,

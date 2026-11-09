@@ -16,6 +16,7 @@ from fastapi import FastAPI
 
 from mdx_assessment.core.api import create_app
 from mdx_assessment.core.config import ConfigError, LoadedConfig
+from mdx_assessment.core.orchestration.playbooks import PlaybookStore
 from mdx_assessment.core.platform import PlatformRegistries, create_platform_registries
 from mdx_assessment.core.tools.permissions import PERMISSIONS_PATH, PermissionMatrix
 from mdx_assessment.settings import get_settings
@@ -36,6 +37,7 @@ def load_config(config_dir: Path | None = None) -> LoadedConfig:
     registries = build_registries()
     config = registries.config.load_config(directory)
     problems = registries.problems(config.get(PERMISSIONS_PATH, PermissionMatrix))
+    problems += PlaybookStore.from_config(config).unknown_tasks(t.id for t in registries.tasks)
     if problems:
         raise ConfigError(problems)
     return config

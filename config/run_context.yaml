@@ -1,0 +1,7 @@
+# Settings for the run-context facts (owner: MDX pack; plan §2.5).
+
+high_volume_flag_threshold: 300    # raw MDX flags above this select the High volume playbook (SP6)
+provisional: true
+note: >-
+  Placeholder until ADB says whether "high volume" is a fixed count or relative to
+  history (open question Q-06).
