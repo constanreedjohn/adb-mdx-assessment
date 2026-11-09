@@ -27,6 +27,7 @@ from mdx_assessment.core.domain import (
     Plan,
     PlanSource,
     PlanStep,
+    PlanValidation,
     ReviewCheckResult,
     RunContext,
     RunObservation,
@@ -78,6 +79,13 @@ PLAN = Plan(
     follow_ups=(PlanStep(step_id="f1", task="input_validation.compare_prior_day"),),
     rationale="normal day",
     cited_fact_ids=("fact-flag-count",),
+)
+VALIDATION = PlanValidation(
+    valid=False,
+    checks={"P-1": False, "P-2": True, "P-3": True, "P-4": True},
+    attempts=2,
+    errors=("P-1: mandatory step 'a.b' is missing",),
+    fallback_reason="plan_invalid",
 )
 TASK = Task(
     task_id="t1",
@@ -136,6 +144,7 @@ SAMPLES: list[BaseModel] = [
     FINDING,
     STEP,
     PLAN,
+    VALIDATION,
     TASK,
     CHECK,
     DECISION,

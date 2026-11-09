@@ -25,6 +25,7 @@ class SessionStatus(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
     COMPLETED_DEGRADED = "completed_degraded"  # completed with a fallback (plan §3.3)
+    DEFAULT_COMPLETE = "default_complete"  # Master planning failed; the default plan ran
     FAILED = "failed"
 
 
@@ -58,6 +59,7 @@ class SessionResult(DomainModel):
             raise ValueError("finished_at is before started_at")
         if self.status is SessionStatus.RUNNING and self.finished_at is not None:
             raise ValueError("a running session has no finished_at")
-        if self.status is SessionStatus.COMPLETED_DEGRADED and not self.fallbacks:
-            raise ValueError("a degraded session must list the fallbacks it used")
+        fallback_statuses = (SessionStatus.COMPLETED_DEGRADED, SessionStatus.DEFAULT_COMPLETE)
+        if self.status in fallback_statuses and not self.fallbacks:
+            raise ValueError(f"a {self.status} session must list the fallbacks it used")
         return self

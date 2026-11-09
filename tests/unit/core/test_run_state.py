@@ -99,6 +99,7 @@ def test_allow_list_is_derived_from_the_state() -> None:
         "Plan",
         "PlanStep",
         "PlanSource",
+        "PlanValidation",
         "ExecutionEntry",
         "TaskStatus",
         "ReviewCheckResult",

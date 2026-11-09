@@ -84,13 +84,16 @@ def test_finding_rejects_malformed_evidence_id() -> None:
         Finding(finding_id="f1", kind="k", subject="s", summary="s", evidence_ids=("ev-xyz",))
 
 
-def test_degraded_session_must_list_fallbacks() -> None:
+@pytest.mark.parametrize(
+    "status", [SessionStatus.COMPLETED_DEGRADED, SessionStatus.DEFAULT_COMPLETE]
+)
+def test_fallback_statuses_must_list_fallbacks(status: SessionStatus) -> None:
     with pytest.raises(ValidationError, match="fallbacks"):
         SessionResult(
             session_id="x",
             business_date=date(2026, 10, 15),
             data_type="linear",
-            status=SessionStatus.COMPLETED_DEGRADED,
+            status=status,
             started_at=T0,
             finished_at=T0,
         )

@@ -87,4 +87,6 @@ class RunState(BaseModel):
     """The Master Agent's run opinion (typed in E10-02)."""
 
     status: SessionStatus = SessionStatus.RUNNING
+    analyst_notice: str | None = None
+    """Set when the run stopped and an analyst must be told, e.g. the model is unreachable."""
     fallbacks: Annotated[list[str], operator.add] = Field(default_factory=list)

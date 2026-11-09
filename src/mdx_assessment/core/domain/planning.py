@@ -25,12 +25,23 @@ class PlanStep(DomainModel):
     rationale: str = ""
 
 
+class PlanValidation(DomainModel):
+    """How a plan fared against P-1 to P-4 (plan §2.4). `valid` is False on a default plan."""
+
+    valid: bool
+    checks: dict[str, bool]
+    attempts: int = Field(ge=0)
+    errors: tuple[str, ...] = ()
+    fallback_reason: str | None = None
+
+
 class Plan(DomainModel):
     source: PlanSource
     steps: tuple[PlanStep, ...] = Field(min_length=1)
     follow_ups: tuple[PlanStep, ...] = ()
     rationale: str = ""
     cited_fact_ids: tuple[str, ...] = ()
+    validation: PlanValidation | None = None
 
     @model_validator(mode="after")
     def _unique_step_ids(self) -> Self:

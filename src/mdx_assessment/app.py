@@ -10,6 +10,8 @@ Startup fails fast (with every problem listed) if `config/` is invalid.
 
 from __future__ import annotations
 
+import logging
+import sys
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -21,6 +23,16 @@ from mdx_assessment.core.platform import PlatformRegistries, create_platform_reg
 from mdx_assessment.core.tools.permissions import PERMISSIONS_PATH, PermissionMatrix
 from mdx_assessment.settings import get_settings
 from mdx_assessment.usecases.mdx import register as mdx_pack
+
+
+def configure_logging() -> None:
+    """The application's own logs go to the terminal, at INFO."""
+    logger = logging.getLogger("mdx_assessment")
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 
 def build_registries() -> PlatformRegistries:
@@ -44,6 +56,7 @@ def load_config(config_dir: Path | None = None) -> LoadedConfig:
 
 
 def build_app(config_dir: Path | None = None) -> FastAPI:
+    configure_logging()
     config = load_config(config_dir)
     return create_app(config_version=config.version)
 

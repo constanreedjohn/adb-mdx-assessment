@@ -15,12 +15,15 @@
 - **Safe failure.** An unknown task, a crash or invalid output fails that step only:
   it is recorded with its error, flagged at its review point, and the run continues
   and completes, marked degraded (PDF §3.3).
+- **Runtime errors stop the run.** If the model is unreachable after its retries, no
+  LLM or analyst can fix that: the run ends `failed` with a notice for the analyst.
 - Every plan, task and decision is an audit event.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -41,6 +44,7 @@ from mdx_assessment.core.domain import (
     TaskStatus,
 )
 from mdx_assessment.core.gateway.gateway import LLMGateway
+from mdx_assessment.core.gateway.provider import LLMError
 from mdx_assessment.core.observability.tracing import Tracer
 from mdx_assessment.core.orchestration.playbooks import ResolvedPlaybook
 from mdx_assessment.core.orchestration.state import ExecutionEntry, RunState
@@ -53,8 +57,14 @@ from mdx_assessment.core.orchestration.tasks import (
 from mdx_assessment.core.persistence.audit import AuditTrail
 from mdx_assessment.core.tools.client import ToolHub
 
+logger = logging.getLogger(__name__)
+
 MASTER_AGENT = "master_agent"
 ORCHESTRATOR = "orchestrator"
+MODEL_UNAVAILABLE_NOTICE = (
+    "This run stopped because the AI model could not be reached. No checks were completed. "
+    "A developer needs to fix the connection, then the run can be started again."
+)
 Clock = Callable[[], datetime]
 
 ContextHook = Callable[[RunState], Awaitable[RunContext]]
@@ -160,7 +170,11 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
         return {"playbook": playbook}
 
     async def master_plan(state: RunState) -> dict[str, Any]:
-        plan = await hooks.plan(state)
+        try:
+            plan = await hooks.plan(state)
+        except LLMError as exc:
+            logger.error("session %s stopped: model unavailable: %s", state.session_id, exc)
+            return {"status": SessionStatus.FAILED, "analyst_notice": MODEL_UNAVAILABLE_NOTICE}
         await runtime.record(
             state,
             MASTER_AGENT,
@@ -172,7 +186,10 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
                 "cited_fact_ids": list(plan.cited_fact_ids),
             },
         )
-        return {"plan": plan, "next_step": 0}
+        update: dict[str, Any] = {"plan": plan, "next_step": 0}
+        if plan.validation and plan.validation.fallback_reason:
+            update["fallbacks"] = [f"plan_default:{plan.validation.fallback_reason}"]
+        return update
 
     async def dispatch(state: RunState) -> dict[str, Any]:
         assert state.plan is not None  # guaranteed by routing
@@ -263,10 +280,16 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
 
     async def master_synthesize(state: RunState) -> dict[str, Any]:
         failed = [e.step_id for e in state.execution if e.status is TaskStatus.FAILED]
+        used_default = bool(
+            state.plan and state.plan.validation and state.plan.validation.fallback_reason
+        )
         update: dict[str, Any] = {"run_opinion": await hooks.synthesize(state)}
         if failed:
-            update["status"] = SessionStatus.COMPLETED_DEGRADED
             update["fallbacks"] = [f"step_failed:{s}" for s in failed]
+        if used_default:
+            update["status"] = SessionStatus.DEFAULT_COMPLETE
+        elif failed:
+            update["status"] = SessionStatus.COMPLETED_DEGRADED
         else:
             update["status"] = SessionStatus.COMPLETED
         payload: dict[str, JsonValue] = {
@@ -277,7 +300,9 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
         await runtime.record(state, MASTER_AGENT, "session_completed", payload)
         return update
 
-    def after_plan(state: RunState) -> Literal["dispatch", "master_synthesize"]:
+    def after_plan(state: RunState) -> Literal["dispatch", "master_synthesize", "__end__"]:
+        if state.status is SessionStatus.FAILED:
+            return "__end__"
         return "dispatch" if state.plan and state.plan.steps else "master_synthesize"
 
     def after_review(state: RunState) -> Literal["dispatch", "master_synthesize"]:
