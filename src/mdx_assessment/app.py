@@ -29,14 +29,13 @@ def build_registries() -> PlatformRegistries:
 
 
 def load_config(config_dir: Path | None = None) -> LoadedConfig:
-    """Validate `config/` against every registered schema, and the permission matrix
-    against the registered tools. Raises ConfigError listing every problem."""
+    """Validate `config/` against every registered schema, and the registries (tasks,
+    agents, checks, tools) against each other and the permission matrix.
+    Raises ConfigError listing every problem."""
     directory = config_dir or get_settings().app.config_dir
     registries = build_registries()
     config = registries.config.load_config(directory)
-    problems = config.get(PERMISSIONS_PATH, PermissionMatrix).check_against_tools(
-        registries.tools.specs
-    )
+    problems = registries.problems(config.get(PERMISSIONS_PATH, PermissionMatrix))
     if problems:
         raise ConfigError(problems)
     return config

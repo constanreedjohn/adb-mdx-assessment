@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from enum import StrEnum
@@ -167,10 +167,10 @@ class AgentToolClient:
         return self.budget.max_seconds - (self._clock() - self._started)
 
     async def call(
-        self, tool_id: str, operation: str, arguments: dict[str, JsonValue] | None = None
+        self, tool_id: str, operation: str, arguments: Mapping[str, JsonValue] | None = None
     ) -> dict[str, Any]:
         """Call `operation` on `tool_id`. Returns the tool's structured result."""
-        args = arguments or {}
+        args: dict[str, JsonValue] = dict(arguments or {})
         started = time.perf_counter()
         status, result_bytes, error = CallStatus.FAILED, 0, ""
         try:

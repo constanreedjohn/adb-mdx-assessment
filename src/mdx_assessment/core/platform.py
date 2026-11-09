@@ -5,9 +5,7 @@ Lives at `core.platform` (not in `core.registry`) because it pulls in many subsy
 
 - `config`: config schemas (E1-06)
 - `tools`: MCP tool servers and their operations (E3-03)
-
-SP2 adds the task and agent registries (E6-02) as further fields; packs'
-`register(registries)` signatures stay the same.
+- `agents`, `tasks`, `checks`: agents, the tasks they run, and review checks (E6-02)
 """
 
 from __future__ import annotations
@@ -15,7 +13,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from mdx_assessment.core.config import ConfigSchemaRegistry
+from mdx_assessment.core.orchestration.graph import MASTER_AGENT
 from mdx_assessment.core.orchestration.playbooks import PLAYBOOKS_PATTERN, PlaybookDocument
+from mdx_assessment.core.orchestration.tasks import (
+    AgentDefinition,
+    AgentRegistry,
+    ReviewCheckRegistry,
+    TaskRegistry,
+    check_consistency,
+)
 from mdx_assessment.core.tools.audit import AUDIT_TOOL_SPEC, create_audit_server
 from mdx_assessment.core.tools.permissions import PERMISSIONS_PATH, PermissionMatrix
 from mdx_assessment.core.tools.registry import ToolRegistry
@@ -25,6 +31,20 @@ from mdx_assessment.core.tools.registry import ToolRegistry
 class PlatformRegistries:
     config: ConfigSchemaRegistry = field(default_factory=ConfigSchemaRegistry)
     tools: ToolRegistry = field(default_factory=ToolRegistry)
+    agents: AgentRegistry = field(default_factory=AgentRegistry)
+    tasks: TaskRegistry = field(default_factory=TaskRegistry)
+    checks: ReviewCheckRegistry = field(default_factory=ReviewCheckRegistry)
+
+    def problems(self, permissions: PermissionMatrix) -> list[str]:
+        """Inconsistencies between the registries and the permission matrix."""
+        found = check_consistency(self.tasks, self.agents, self.checks)
+        found += permissions.check_against_tools(self.tools.specs)
+        found += [
+            f"{PERMISSIONS_PATH}: registered agent {a.id!r} is not in `agents`"
+            for a in self.agents
+            if a.id not in permissions.agents
+        ]
+        return found
 
 
 def create_platform_registries() -> PlatformRegistries:
@@ -33,4 +53,11 @@ def create_platform_registries() -> PlatformRegistries:
     registries.config.register(PLAYBOOKS_PATTERN, PlaybookDocument, owner="core")
     registries.config.register(PERMISSIONS_PATH, PermissionMatrix, owner="core")
     registries.tools.register(AUDIT_TOOL_SPEC, lambda ctx: create_audit_server(ctx.audit))
+    registries.agents.register(
+        AgentDefinition(
+            MASTER_AGENT,
+            "Supervisor: plans the run within the selected playbook, reviews every step's "
+            "output, decides what happens next and writes the run opinion.",
+        )
+    )
     return registries

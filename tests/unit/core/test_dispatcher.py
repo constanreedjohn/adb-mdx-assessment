@@ -1,0 +1,239 @@
+"""The plan-driven dispatcher and review points, with toy tasks (no use-case pack, no tools)."""
+
+from datetime import UTC, date, datetime
+from typing import Any
+
+import pytest
+from langgraph.checkpoint.memory import InMemorySaver
+from pydantic import BaseModel, JsonValue
+
+from mdx_assessment.core.domain import (
+    DecisionKind,
+    Plan,
+    PlanSource,
+    PlanStep,
+    ReviewCheckResult,
+    SessionStatus,
+    TaskStatus,
+)
+from mdx_assessment.core.orchestration.checkpoint import checkpoint_serializer, thread_config
+from mdx_assessment.core.orchestration.graph import GraphHooks, SessionRuntime, build_session_graph
+from mdx_assessment.core.orchestration.state import ExecutionEntry, RunState
+from mdx_assessment.core.orchestration.tasks import (
+    AgentDefinition,
+    AgentRegistry,
+    ReviewCheckDefinition,
+    ReviewCheckRegistry,
+    TaskContext,
+    TaskDefinition,
+    TaskRegistry,
+    check_consistency,
+)
+from mdx_assessment.core.persistence import InMemoryAuditTrail
+
+pytestmark = pytest.mark.anyio
+T0 = datetime(2026, 10, 15, 9, 20, tzinfo=UTC)
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+class Count(BaseModel):
+    n: int
+
+
+class Other(BaseModel):
+    text: str
+
+
+async def produce(ctx: TaskContext) -> BaseModel:
+    previous = ctx.result_of("toy.produce")
+    return Count(n=(previous or {}).get("n", 0) + 1)  # type: ignore[operator]
+
+
+async def explode(ctx: TaskContext) -> BaseModel:
+    raise RuntimeError("tool unreachable")
+
+
+async def wrong_type(ctx: TaskContext) -> BaseModel:
+    return Other(text="not a Count")
+
+
+def always_fails(state: RunState, entry: ExecutionEntry) -> ReviewCheckResult:
+    return ReviewCheckResult(check_id="C-X", name="always fails", passed=False, details="test")
+
+
+def registries() -> tuple[TaskRegistry, ReviewCheckRegistry]:
+    tasks, checks = TaskRegistry(), ReviewCheckRegistry()
+    checks.register(ReviewCheckDefinition("C-X", "always fails", always_fails))
+    for task_id, handler, check_ids in (
+        ("toy.produce", produce, ()),
+        ("toy.explode", explode, ()),
+        ("toy.wrong_type", wrong_type, ()),
+        ("toy.checked", produce, ("C-X",)),
+    ):
+        tasks.register(
+            TaskDefinition(
+                id=task_id,
+                agent="toy_agent",
+                description=task_id,
+                output_model=Count,
+                handler=handler,
+                review_checks=check_ids,
+            )
+        )
+    return tasks, checks
+
+
+def plan_of(*task_ids: str) -> Plan:
+    return Plan(
+        source=PlanSource.DEFAULT,
+        steps=tuple(PlanStep(step_id=f"s{i}", task=t) for i, t in enumerate(task_ids, 1)),
+    )
+
+
+async def run(
+    plan: Plan, hooks: dict[str, Any] | None = None
+) -> tuple[RunState, InMemoryAuditTrail]:
+    tasks, checks = registries()
+    audit = InMemoryAuditTrail()
+    runtime = SessionRuntime(tasks=tasks, checks=checks, audit=audit, clock=lambda: T0)
+
+    async def fixed_plan(state: RunState) -> Plan:
+        return plan
+
+    graph = build_session_graph(runtime, GraphHooks(plan=fixed_plan, **(hooks or {})))
+    app = graph.compile(checkpointer=InMemorySaver(serde=checkpoint_serializer()))
+    initial = RunState(session_id="sess-1", business_date=date(2026, 10, 15), data_type="linear")
+    final = RunState.model_validate(await app.ainvoke(initial, thread_config("sess-1")))
+    return final, audit
+
+
+# --- acceptance: a plan of three stub steps runs end to end ----------------------------------
+
+
+async def test_three_steps_run_in_order_and_are_logged() -> None:
+    final, audit = await run(plan_of("toy.produce", "toy.produce", "toy.produce"))
+    assert [(e.step_id, e.task, e.status) for e in final.execution] == [
+        ("s1", "toy.produce", TaskStatus.DONE),
+        ("s2", "toy.produce", TaskStatus.DONE),
+        ("s3", "toy.produce", TaskStatus.DONE),
+    ]
+    assert final.agent_results == {
+        "s1": {"n": 1},
+        "s2": {"n": 2},
+        "s3": {"n": 3},
+    }  # each saw the last
+    assert [d.kind for d in final.decisions] == [DecisionKind.ACCEPT] * 3
+    assert final.status is SessionStatus.COMPLETED
+    assert final.next_step == 3
+    assert [e.event_type for e in audit.read()] == [
+        "plan",
+        "task_completed",
+        "decision",
+        "task_completed",
+        "decision",
+        "task_completed",
+        "decision",
+        "session_completed",
+    ]
+    assert audit.verify().valid
+
+
+# --- safe failure: one bad step doesn't stop the run ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("bad_task", "error"),
+    [
+        ("toy.missing", "unknown task 'toy.missing'"),
+        ("toy.explode", "RuntimeError: tool unreachable"),
+        ("toy.wrong_type", "invalid output"),
+    ],
+)
+async def test_a_failed_step_is_flagged_and_the_run_completes(bad_task: str, error: str) -> None:
+    final, _ = await run(plan_of("toy.produce", bad_task, "toy.produce"))
+    statuses = [e.status for e in final.execution]
+    assert statuses == [TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.DONE]
+    assert error in (final.execution[1].error or "")
+    assert final.decisions[1].kind is DecisionKind.FLAG_FOR_HUMAN
+    assert "s2" not in final.agent_results
+    assert final.status is SessionStatus.COMPLETED_DEGRADED
+    assert final.fallbacks == ["step_failed:s2"]
+
+
+# --- review points ---------------------------------------------------------------------------
+
+
+async def test_registered_checks_run_at_the_review_point() -> None:
+    final, audit = await run(plan_of("toy.produce", "toy.checked"))
+    assert [c.check_id for c in final.review_checks] == ["C-X"]
+    assert final.decisions[1].kind is DecisionKind.FLAG_FOR_HUMAN
+    assert "C-X" in final.decisions[1].reason
+    decision_events = [e for e in audit.read() if e.event_type == "decision"]
+    assert decision_events[1].payload["checks"] == {"C-X": False}
+
+
+# --- hooks -------------------------------------------------------------------------------------
+
+
+async def test_hooks_fill_the_state() -> None:
+    async def context(state: RunState) -> dict[str, JsonValue]:
+        return {"flag_count": 28}
+
+    async def playbook(state: RunState) -> dict[str, JsonValue] | None:
+        return {"id": "normal_eod"}
+
+    async def opinion(state: RunState) -> dict[str, JsonValue] | None:
+        return {"summary": f"{len(state.execution)} steps"}
+
+    final, _ = await run(
+        plan_of("toy.produce"),
+        {"gather_context": context, "select_playbook": playbook, "synthesize": opinion},
+    )
+    assert final.run_context == {"flag_count": 28}
+    assert final.playbook == {"id": "normal_eod"}
+    assert final.run_opinion == {"summary": "1 steps"}
+
+
+async def test_an_empty_plan_goes_straight_to_synthesis() -> None:
+    final, audit = await run(
+        Plan.model_construct(source=PlanSource.DEFAULT, steps=(), follow_ups=())
+    )
+    assert final.execution == []
+    assert final.status is SessionStatus.COMPLETED
+    assert [e.event_type for e in audit.read()] == ["plan", "session_completed"]
+
+
+# --- registry consistency -----------------------------------------------------------------------
+
+
+def test_consistency_reports_unknown_agents_and_checks() -> None:
+    tasks, checks = registries()
+    tasks.register(
+        TaskDefinition(
+            id="toy.orphan",
+            agent="ghost",
+            description="",
+            output_model=Count,
+            handler=produce,
+            review_checks=("C-404",),
+        )
+    )
+    agents = AgentRegistry()
+    agents.register(AgentDefinition("toy_agent", "toy"))
+    assert check_consistency(tasks, agents, checks) == [
+        "task 'toy.orphan': unknown agent 'ghost'",
+        "task 'toy.orphan': unknown review check 'C-404'",
+    ]
+
+
+def test_catalogue_is_data() -> None:
+    tasks, _ = registries()
+    assert tasks.catalogue()[0] == {
+        "task": "toy.produce",
+        "agent": "toy_agent",
+        "description": "toy.produce",
+    }
