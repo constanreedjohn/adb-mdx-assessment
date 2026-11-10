@@ -158,7 +158,7 @@ async def test_a_value_outside_the_allowed_set_is_rejected(
     prompts: PromptStore, audit: InMemoryAuditTrail
 ) -> None:
     fake = FakeProvider({"classify": {"label": "definitely_fine", "confidence": 0.9}})
-    with pytest.raises(LLMOutputError, match="did not match Verdict"):
+    with pytest.raises(LLMOutputError, match="invalid Verdict: label"):
         await classify(gateway(fake, prompts, audit))
     assert audit.read()[-1].payload["outcome"] == "output_error"
 

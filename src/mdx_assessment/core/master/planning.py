@@ -292,6 +292,7 @@ def master_plan_hook(runtime: SessionRuntime, tolerance: NumberTolerance | None 
                     output_model=MasterPlanOutput,
                     actor=MASTER_AGENT,
                     session_id=state.session_id,
+                    max_attempts=1,  # this loop retries, after P-1 to P-4 as well
                 )
             except LLMOutputError as exc:
                 report = PlanCheckReport(checks={}, errors=(f"output: {exc}",))

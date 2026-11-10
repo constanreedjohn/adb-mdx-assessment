@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 
 class LLMError(RuntimeError):
@@ -25,12 +25,22 @@ class LLMOutputError(LLMError):
     """The model replied, but not with usable output (refusal, invalid structure, bad value)."""
 
 
+class LLMPromptError(LLMOutputError):
+    """The prompt file is missing or unreadable: a configuration fault, never retried."""
+
+
 class LLMGroundingError(LLMOutputError):
     """The output cites evidence that isn't there, or states numbers the evidence lacks."""
 
     def __init__(self, problems: tuple[str, ...]) -> None:
         self.problems = problems
         super().__init__("not backed by the evidence: " + "; ".join(problems))
+
+
+def invalid_output(model: type[BaseModel], exc: ValidationError) -> LLMOutputError:
+    """Names the failing fields (never their values), so a retry can say what to fix."""
+    fields = sorted({".".join(map(str, e["loc"])) or "(root)" for e in exc.errors()})
+    return LLMOutputError(f"invalid {model.__name__}: {', '.join(fields)}")
 
 
 @dataclass(frozen=True)

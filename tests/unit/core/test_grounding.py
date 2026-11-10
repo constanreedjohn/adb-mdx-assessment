@@ -249,9 +249,9 @@ async def test_the_gateway_rejects_an_invented_number(tmp_path: Path) -> None:
     with pytest.raises(LLMGroundingError, match="'45 bps' does not match") as raised:
         await explain(gw)
     assert raised.value.problems == ("'45 bps' does not match the cited evidence",)
-    [event] = audit.read()
-    assert event.payload["outcome"] == "ungrounded"
-    assert "45 bps" in str(event.payload["error"])
+    events = audit.read()  # retried once (E5-04), rejected both times
+    assert [e.payload["outcome"] for e in events] == ["ungrounded", "ungrounded"]
+    assert all("45 bps" in str(e.payload["error"]) for e in events)
 
 
 async def test_the_gateway_accepts_a_converted_number(tmp_path: Path) -> None:

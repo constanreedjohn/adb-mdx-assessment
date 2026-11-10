@@ -17,10 +17,10 @@ from mdx_assessment.core.gateway.azure_openai import (
     missing_settings,
 )
 from mdx_assessment.core.gateway.provider import (
-    LLMOutputError,
     LLMRequest,
     LLMResponse,
     LLMUnavailableError,
+    invalid_output,
 )
 from mdx_assessment.secret_store import SecretName, SecretsProvider, get_secrets_provider
 from mdx_assessment.settings import AzureOpenAIAuthMode, AzureOpenAISettings, get_settings
@@ -85,7 +85,7 @@ class AzureOpenAIProvider:
         except APIStatusError as exc:
             raise LLMUnavailableError(f"Azure OpenAI returned HTTP {exc.status_code}") from exc
         except ValidationError as exc:  # the reply didn't fit the output model
-            raise LLMOutputError(f"output did not match {request.output_model.__name__}") from exc
+            raise invalid_output(request.output_model, exc) from exc
 
         choice = completion.choices[0]
         usage = completion.usage

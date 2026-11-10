@@ -25,6 +25,7 @@ from mdx_assessment.core.gateway.provider import (
     LLMRequest,
     LLMResponse,
     LLMUnavailableError,
+    invalid_output,
 )
 
 FakeReply = BaseModel | Mapping[str, Any] | str
@@ -55,8 +56,10 @@ class FakeProvider:
             parsed = request.output_model.model_validate(
                 reply.model_dump() if isinstance(reply, BaseModel) else self._as_data(reply)
             )
-        except (ValidationError, json.JSONDecodeError) as exc:
-            raise LLMOutputError(f"output did not match {request.output_model.__name__}") from exc
+        except ValidationError as exc:
+            raise invalid_output(request.output_model, exc) from exc
+        except json.JSONDecodeError as exc:
+            raise LLMOutputError(f"the reply is not valid JSON: {exc.msg}") from exc
         return LLMResponse(
             parsed=parsed,
             refusal=None,
