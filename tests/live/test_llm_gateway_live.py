@@ -20,14 +20,17 @@ async def test_gateway_call_against_azure_openai() -> None:
     audit = InMemoryAuditTrail()
     gateway = create_llm_gateway(audit)  # default provider: Azure OpenAI
     token = "mdx-" + secrets.token_hex(4)
-    result = await gateway.call(
-        "smoke_test",
-        "v1",
-        inputs={"token": token},
-        output_model=SmokeReply,
-        actor="system",
-        session_id="live-test",
-    )
+    try:
+        result = await gateway.call(
+            "smoke_test",
+            "v1",
+            inputs={"token": token},
+            output_model=SmokeReply,
+            actor="system",
+            session_id="live-test",
+        )
+    finally:
+        await gateway.aclose()
     assert result.provider == "azure_openai"
     assert result.output.status == "ok"
     assert result.output.echo == token

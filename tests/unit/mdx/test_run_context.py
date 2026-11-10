@@ -22,7 +22,7 @@ from mdx_assessment.core.orchestration.run_context import (
     playbook_hook,
 )
 from mdx_assessment.core.orchestration.state import RunState
-from mdx_assessment.core.persistence import InMemoryAuditTrail
+from mdx_assessment.core.persistence import InMemoryAuditTrail, InMemoryCaseStore
 from mdx_assessment.core.tools.client import ToolHub
 from mdx_assessment.core.tools.permissions import PERMISSIONS_PATH, PermissionMatrix
 from mdx_assessment.core.tools.registry import ToolContext
@@ -59,7 +59,7 @@ async def open_hub(
     settings = base.model_copy(
         update={"app": AppSettings(config_dir=base.app.config_dir, data_dir=data_dir)}
     )
-    context = ToolContext(config=config, settings=settings, audit=audit)
+    context = ToolContext(config=config, settings=settings, audit=audit, cases=InMemoryCaseStore())
     async with ToolHub(
         build_registries().tools, config.get(PERMISSIONS_PATH, PermissionMatrix), context
     ) as hub:

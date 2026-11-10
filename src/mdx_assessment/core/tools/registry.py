@@ -2,7 +2,8 @@
 
 Packs register a `ToolSpec` (identity and operations) plus a factory, because a
 server often needs runtime things to exist first: the MDX server needs the data
-directory and the expected-file manifest, the audit server needs the audit trail.
+directory and the expected-file manifest, the audit server needs the audit trail and
+the cases server the case store.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from mcp.server.mcpserver import MCPServer
 
 from mdx_assessment.core.config import LoadedConfig
 from mdx_assessment.core.persistence.audit import AuditTrail
+from mdx_assessment.core.persistence.case_store import CaseStore
 from mdx_assessment.core.registry.specs import ToolSpec
 from mdx_assessment.settings import Settings
 
@@ -25,6 +27,7 @@ class ToolContext:
     config: LoadedConfig
     settings: Settings
     audit: AuditTrail
+    cases: CaseStore
 
 
 ToolFactory = Callable[[ToolContext], MCPServer]

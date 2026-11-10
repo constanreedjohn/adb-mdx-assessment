@@ -13,8 +13,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -37,6 +37,7 @@ from mdx_assessment.core.orchestration.playbooks import PlaybookStore
 from mdx_assessment.core.orchestration.run_context import context_hook, playbook_hook
 from mdx_assessment.core.orchestration.state import RunState
 from mdx_assessment.core.persistence.audit import AuditTrail
+from mdx_assessment.core.persistence.case_store import CaseStore
 from mdx_assessment.core.persistence.session_store import SessionStore
 from mdx_assessment.core.platform import PlatformRegistries
 from mdx_assessment.core.tools.client import ToolHub
@@ -68,6 +69,7 @@ class SessionService:
         settings: Settings,
         store: SessionStore,
         audit: AuditTrail,
+        cases: CaseStore,
         checkpointer: CheckpointerFactory,
         make_gateway: GatewayFactory = _default_gateway,
         make_tracer: Callable[[], Tracer] = build_tracer,
@@ -77,6 +79,7 @@ class SessionService:
         self._settings = settings
         self._store = store
         self._audit = audit
+        self._cases = cases
         self._checkpointer = checkpointer
         self._make_gateway = make_gateway
         self._make_tracer = make_tracer
@@ -158,9 +161,12 @@ class SessionService:
         versions = initial.versions.model_copy(
             update={"llm_deployment": gateway.provider.deployment if gateway else None}
         )
-        context = ToolContext(config=self._config, settings=self._settings, audit=self._audit)
+        context = ToolContext(
+            config=self._config, settings=self._settings, audit=self._audit, cases=self._cases
+        )
         permissions = self._config.get(PERMISSIONS_PATH, PermissionMatrix)
         async with (
+            self._closing(gateway),
             ToolHub(registries.tools, permissions, context, tracer) as hub,
             self._checkpointer() as checkpointer,
         ):
@@ -183,6 +189,16 @@ class SessionService:
                 thread_config(initial.session_id),
             )
         return RunState.model_validate(output)
+
+    @staticmethod
+    @asynccontextmanager
+    async def _closing(gateway: LLMGateway | None) -> AsyncIterator[None]:
+        """Close the session's model connections on the loop that opened them."""
+        try:
+            yield
+        finally:
+            if gateway is not None:
+                await gateway.aclose()
 
     @staticmethod
     def _result(state: RunState, started_at: datetime, trace: TraceHandle) -> SessionResult:

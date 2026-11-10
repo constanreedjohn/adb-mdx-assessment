@@ -90,6 +90,10 @@ class LLMGateway:
         self._audit = audit
         self._tracer = tracer or Tracer(None)
 
+    async def aclose(self) -> None:
+        """Release the provider's connections. The owner calls it once it is done."""
+        await self.provider.aclose()
+
     async def call[M: BaseModel](
         self,
         prompt_id: str,

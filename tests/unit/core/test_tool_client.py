@@ -14,7 +14,7 @@ from tests.support import CapturedTraces
 from mdx_assessment.core.config import LoadedConfig
 from mdx_assessment.core.domain.canonical import content_hash
 from mdx_assessment.core.observability import Tracer
-from mdx_assessment.core.persistence import InMemoryAuditTrail
+from mdx_assessment.core.persistence import InMemoryAuditTrail, InMemoryCaseStore
 from mdx_assessment.core.registry import ToolAccess, ToolGroup
 from mdx_assessment.core.tools.client import (
     BudgetExceededError,
@@ -104,6 +104,7 @@ def make_hub(calls: list[str], audit: InMemoryAuditTrail, tracer: Tracer | None 
         config=LoadedConfig(config_dir=Path(), version="v", documents={}, prompts={}),
         settings=get_settings(),
         audit=audit,
+        cases=InMemoryCaseStore(),
     )
     return ToolHub(registry, MATRIX, context, tracer)
 
@@ -263,7 +264,10 @@ def test_hub_rejects_a_matrix_without_a_row_for_a_registered_tool(
     registry.register(ToySpec(), lambda ctx: toy_server(calls))
     registry.register(ToySpec(id="toy2"), lambda ctx: toy_server(calls))
     context = ToolContext(
-        config=LoadedConfig(Path(), "v", {}, {}), settings=get_settings(), audit=audit
+        config=LoadedConfig(Path(), "v", {}, {}),
+        settings=get_settings(),
+        audit=audit,
+        cases=InMemoryCaseStore(),
     )
     with pytest.raises(ValueError, match="registered tool 'toy2' has no row"):
         ToolHub(registry, MATRIX, context)

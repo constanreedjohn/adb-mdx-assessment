@@ -14,7 +14,7 @@ from mdx_assessment.core.domain import DecisionKind, Plan, PlanSource, PlanStep,
 from mdx_assessment.core.orchestration.checkpoint import checkpoint_serializer, thread_config
 from mdx_assessment.core.orchestration.graph import GraphHooks, SessionRuntime, build_session_graph
 from mdx_assessment.core.orchestration.state import RunState
-from mdx_assessment.core.persistence import InMemoryAuditTrail
+from mdx_assessment.core.persistence import InMemoryAuditTrail, InMemoryCaseStore
 from mdx_assessment.core.tools.client import ToolHub
 from mdx_assessment.core.tools.permissions import PERMISSIONS_PATH, PermissionMatrix
 from mdx_assessment.core.tools.registry import ToolContext
@@ -69,7 +69,7 @@ async def outcome(
     hub = ToolHub(
         registries.tools,
         config.get(PERMISSIONS_PATH, PermissionMatrix),
-        ToolContext(config=config, settings=settings, audit=audit),
+        ToolContext(config=config, settings=settings, audit=audit, cases=InMemoryCaseStore()),
     )
 
     async def default_plan(state: RunState) -> Plan:

@@ -1,7 +1,8 @@
 """One log file per app lifespan: `<log dir>/app-<UTC start time>.log`.
 
 The file opens when the app starts and closes when it stops. It takes the application's
-own logs plus uvicorn's server and request logs. A log folder that can't be written
+own logs plus uvicorn's server and request logs, except requests to `/health`: Docker
+checks it every few seconds, and those lines would bury everything else. A log folder that can't be written
 costs the file only: the app still starts, and the terminal still has the logs.
 """
 
@@ -17,9 +18,20 @@ from fastapi import FastAPI
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 _LOGGERS = ("mdx_assessment", "uvicorn", "uvicorn.access")  # uvicorn.access doesn't propagate
+QUIET_PATHS = frozenset({"/health"})
 
 logger = logging.getLogger(__name__)
 Lifespan = Callable[[FastAPI], AbstractAsyncContextManager[None]]
+
+
+class SkipQuietPaths(logging.Filter):
+    """Drop uvicorn access lines for health checks. Its args are (client, method, path, ...)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name != "uvicorn.access" or not isinstance(record.args, tuple):
+            return True
+        args = record.args
+        return not (len(args) >= 3 and str(args[2]).split("?")[0] in QUIET_PATHS)
 
 
 def _open_log_file(log_dir: Path) -> logging.FileHandler | None:
@@ -31,6 +43,7 @@ def _open_log_file(log_dir: Path) -> logging.FileHandler | None:
         logger.warning("not writing a log file: cannot use %s (%s)", log_dir, exc.strerror)
         return None
     handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    handler.addFilter(SkipQuietPaths())
     return handler
 
 

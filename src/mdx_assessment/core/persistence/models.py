@@ -18,6 +18,7 @@ from sqlalchemy import (
     Index,
     MetaData,
     String,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -77,6 +78,9 @@ class CaseRow(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+    # One case per item per session, so a step that is resumed can't record an item twice.
+    __table_args__ = (UniqueConstraint("session_id", "item_key"),)
 
 
 class AuditEventRow(Base):

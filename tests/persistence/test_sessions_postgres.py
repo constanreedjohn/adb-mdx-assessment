@@ -17,7 +17,11 @@ from mdx_assessment.core.observability import Tracer
 from mdx_assessment.core.orchestration.checkpoint import open_checkpointer
 from mdx_assessment.core.orchestration.playbooks import PlaybookStore, resolve_playbook
 from mdx_assessment.core.orchestration.session_service import SessionService
-from mdx_assessment.core.persistence import PostgresAuditTrail, create_session_factory
+from mdx_assessment.core.persistence import (
+    PostgresAuditTrail,
+    PostgresCaseStore,
+    create_session_factory,
+)
 from mdx_assessment.core.persistence.audit import AuditTrail
 from mdx_assessment.core.persistence.session_store import PostgresSessionStore
 from mdx_assessment.settings import PROJECT_ROOT, AppSettings, get_settings
@@ -61,6 +65,7 @@ def test_a_session_survives_in_postgres(
         settings=settings,
         store=store,
         audit=PostgresAuditTrail(migrated_engine),
+        cases=PostgresCaseStore(create_session_factory(migrated_engine)),
         checkpointer=checkpointer,
         make_gateway=make_gateway,
         make_tracer=lambda: Tracer(None),

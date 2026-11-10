@@ -87,6 +87,12 @@ class CaseRepo:
         row = self._db.get(CaseRow, case_id)
         return self._to_record(row) if row else None
 
+    def find(self, session_id: str, item_key: str) -> CaseRecord | None:
+        row = self._db.scalar(
+            select(CaseRow).where(CaseRow.session_id == session_id, CaseRow.item_key == item_key)
+        )
+        return self._to_record(row) if row else None
+
     def list_for_session(self, session_id: str) -> list[CaseRecord]:
         rows = self._db.scalars(
             select(CaseRow)

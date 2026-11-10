@@ -58,3 +58,7 @@ class LLMProvider(Protocol):
     async def complete(self, request: LLMRequest) -> LLMResponse:
         """One completion. Raises LLMUnavailableError if the model can't be reached."""
         ...
+
+    async def aclose(self) -> None:
+        """Release connections. Call it on the event loop the provider was used on."""
+        ...

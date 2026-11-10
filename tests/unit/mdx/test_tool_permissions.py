@@ -10,7 +10,7 @@ import pytest
 
 from mdx_assessment.app import build_registries, load_config
 from mdx_assessment.core.config import ConfigError, LoadedConfig
-from mdx_assessment.core.persistence import InMemoryAuditTrail
+from mdx_assessment.core.persistence import InMemoryAuditTrail, InMemoryCaseStore
 from mdx_assessment.core.tools.client import (
     BudgetExceededError,
     TaskBudget,
@@ -58,7 +58,7 @@ async def hub(
     settings = base.model_copy(
         update={"app": AppSettings(config_dir=base.app.config_dir, data_dir=data_dir)}
     )
-    context = ToolContext(config=config, settings=settings, audit=audit)
+    context = ToolContext(config=config, settings=settings, audit=audit, cases=InMemoryCaseStore())
     async with ToolHub(
         build_registries().tools, config.get(PERMISSIONS_PATH, PermissionMatrix), context
     ) as h:
@@ -103,6 +103,54 @@ async def test_audit_tool_cells_match_the_pdf(
             await client.call("activity_and_audit", operation, args)
 
 
+CASE = {"session_id": "s1", "item_key": "JPY 3M", "payload": {"finding": "threshold_artifact"}}
+
+
+async def test_escalation_reporting_records_and_reads_cases(
+    hub: ToolHub, audit: InMemoryAuditTrail
+) -> None:
+    client = hub.client("escalation_reporting", session_id="s1", task_id="t1")
+    created = await client.call("exception_cases", "create_case", CASE)
+    listed = await client.call("exception_cases", "list_cases", {"session_id": "s1"})
+    assert listed["count"] == 1
+    assert listed["cases"][0]["case_id"] == created["case"]["case_id"]
+    statuses = [(e.payload["operation"], e.payload["status"]) for e in audit.read()]
+    assert statuses == [("create_case", "ok"), ("list_cases", "ok")]
+
+
+@pytest.mark.parametrize("agent", ["master_agent", "input_validation", "market_data_assessment"])
+async def test_only_escalation_reporting_may_write_cases(
+    hub: ToolHub, audit: InMemoryAuditTrail, agent: str
+) -> None:
+    with pytest.raises(ToolPermissionError, match=f"{agent} may not write on exception_cases"):
+        await hub.client(agent, session_id="s1", task_id="t1").call(
+            "exception_cases", "create_case", CASE
+        )
+    [event] = audit.read()
+    assert (event.actor, event.payload["status"]) == (agent, "denied")
+
+
+@pytest.mark.parametrize(
+    ("agent", "allowed"),
+    [
+        ("master_agent", True),
+        ("market_data_assessment", True),
+        ("escalation_reporting", True),
+        ("input_validation", False),
+    ],
+)
+async def test_case_readers(hub: ToolHub, agent: str, allowed: bool) -> None:
+    writer = hub.client("escalation_reporting", session_id="s1", task_id="t0")
+    case_id = (await writer.call("exception_cases", "create_case", CASE))["case"]["case_id"]
+    client = hub.client(agent, session_id="s1", task_id="t1")
+    if allowed:
+        case = await client.call("exception_cases", "get_case", {"case_id": case_id})
+        assert case["item_key"] == "JPY 3M"
+    else:
+        with pytest.raises(ToolPermissionError):
+            await client.call("exception_cases", "get_case", {"case_id": case_id})
+
+
 async def test_budget_and_one_audit_event_per_call(hub: ToolHub, audit: InMemoryAuditTrail) -> None:
     client = hub.client(
         "input_validation", session_id="s1", task_id="t1", budget=TaskBudget(max_calls=2)
@@ -135,4 +183,4 @@ def test_granting_write_on_an_adb_system_fails_startup(tmp_path: Path) -> None:
 def test_every_registered_tool_has_a_row(config: LoadedConfig) -> None:
     matrix = config.get(PERMISSIONS_PATH, PermissionMatrix)
     assert matrix.check_against_tools(build_registries().tools.specs) == []
-    assert set(matrix.tools) == {"mdx_data", "activity_and_audit"}
+    assert set(matrix.tools) == {"mdx_data", "activity_and_audit", "exception_cases"}

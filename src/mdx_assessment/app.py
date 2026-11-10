@@ -28,6 +28,7 @@ from mdx_assessment.core.persistence import (
     create_session_factory,
     database_url,
 )
+from mdx_assessment.core.persistence.case_store import PostgresCaseStore
 from mdx_assessment.core.persistence.session_store import PostgresSessionStore
 from mdx_assessment.core.platform import PlatformRegistries, create_platform_registries
 from mdx_assessment.core.tools.permissions import PERMISSIONS_PATH, PermissionMatrix
@@ -68,12 +69,14 @@ def load_config(config_dir: Path | None = None) -> LoadedConfig:
 def build_session_service(config: LoadedConfig) -> SessionService:
     """Nothing connects to the database until the first session starts."""
     engine = create_db_engine()
+    factory = create_session_factory(engine)
     return SessionService(
         registries=build_registries(),
         config=config,
         settings=get_settings(),
-        store=PostgresSessionStore(create_session_factory(engine)),
+        store=PostgresSessionStore(factory),
         audit=PostgresAuditTrail(engine),
+        cases=PostgresCaseStore(factory),
         checkpointer=lambda: open_checkpointer(database_url()),
     )
 

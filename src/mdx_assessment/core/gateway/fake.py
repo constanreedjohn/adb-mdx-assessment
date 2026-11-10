@@ -66,6 +66,9 @@ class FakeProvider:
             completion_tokens=max(1, len(raw) // 4),
         )
 
+    async def aclose(self) -> None:
+        """Nothing to release."""
+
     def _next_reply(self, request: LLMRequest) -> FakeReply:
         entry = self._script[request.prompt_id]
         if callable(entry) and not isinstance(entry, BaseModel):

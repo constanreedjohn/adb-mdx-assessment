@@ -26,7 +26,7 @@ from mdx_assessment.core.observability import Tracer
 from mdx_assessment.core.orchestration.checkpoint import checkpoint_serializer
 from mdx_assessment.core.orchestration.playbooks import PlaybookStore, resolve_playbook
 from mdx_assessment.core.orchestration.session_service import SessionService
-from mdx_assessment.core.persistence import InMemoryAuditTrail
+from mdx_assessment.core.persistence import InMemoryAuditTrail, InMemoryCaseStore
 from mdx_assessment.core.persistence.audit import AuditTrail
 from mdx_assessment.core.persistence.session_store import InMemorySessionStore
 from mdx_assessment.settings import (
@@ -91,6 +91,7 @@ def client_for(
         settings=settings,
         store=InMemorySessionStore(),
         audit=audit,
+        cases=InMemoryCaseStore(),
         checkpointer=memory_checkpointer,
         make_gateway=make_gateway,
         make_tracer=lambda: tracer or Tracer(None),
@@ -156,6 +157,41 @@ def test_an_unavailable_model_still_completes_on_the_default_plan(
     assert session["fallbacks"] == ["plan_default:model_unavailable"]
     assert [e["status"] for e in session["execution"]] == ["done", "done", "done"]
     assert session["agent_results"]["validate_inputs"]["flags_read"] == 28
+
+
+class ClosingProvider(FakeProvider):
+    def __init__(self, script: Any) -> None:
+        super().__init__({"master_plan": script})
+        self.closed = False
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.parametrize("data_type", ["linear", "equity"])  # completed, and stopped
+def test_every_session_closes_its_model_connections(
+    config: LoadedConfig, settings: Settings, data_type: str
+) -> None:
+    providers: list[ClosingProvider] = []
+
+    def make_gateway(trail: AuditTrail, active: Tracer) -> LLMGateway:
+        providers.append(ClosingProvider(valid_plan(config)))
+        return create_llm_gateway(trail, active, settings, providers[-1])
+
+    service = SessionService(
+        registries=build_registries(),
+        config=config,
+        settings=settings,
+        store=InMemorySessionStore(),
+        audit=InMemoryAuditTrail(),
+        cases=InMemoryCaseStore(),
+        checkpointer=memory_checkpointer,
+        make_gateway=make_gateway,
+        make_tracer=lambda: Tracer(None),
+    )
+    client = TestClient(create_app(sessions=service))
+    client.post("/sessions", json={**BODY, "data_type": data_type})
+    assert [p.closed for p in providers] == [True]
 
 
 def test_with_the_llm_off_a_run_needs_no_gateway(config: LoadedConfig, settings: Settings) -> None:

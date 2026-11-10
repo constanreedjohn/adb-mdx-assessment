@@ -25,6 +25,7 @@ from mdx_assessment.core.orchestration.tasks import (
     check_consistency,
 )
 from mdx_assessment.core.tools.audit import AUDIT_TOOL_SPEC, create_audit_server
+from mdx_assessment.core.tools.cases import CASES_TOOL_SPEC, create_cases_server
 from mdx_assessment.core.tools.permissions import PERMISSIONS_PATH, PermissionMatrix
 from mdx_assessment.core.tools.registry import ToolRegistry
 
@@ -57,6 +58,7 @@ def create_platform_registries() -> PlatformRegistries:
     registries.config.register(PLAYBOOKS_PATTERN, PlaybookDocument, owner="core")
     registries.config.register(PERMISSIONS_PATH, PermissionMatrix, owner="core")
     registries.tools.register(AUDIT_TOOL_SPEC, lambda ctx: create_audit_server(ctx.audit))
+    registries.tools.register(CASES_TOOL_SPEC, lambda ctx: create_cases_server(ctx.cases))
     registries.agents.register(
         AgentDefinition(
             MASTER_AGENT,

@@ -47,3 +47,18 @@ def test_an_unusable_folder_does_not_stop_the_app(
     ):
         assert client.get("/health").status_code == 200
     assert "not writing a log file" in caplog.text
+
+
+def test_health_checks_stay_out_of_the_file(tmp_path: Path) -> None:
+    configure_logging()
+    access = logging.getLogger("uvicorn.access")
+    log_dir = tmp_path / "log"
+    with TestClient(create_app(lifespan=file_log_lifespan(log_dir))):
+        line = '%s - "%s %s HTTP/%s" %d'  # uvicorn's own access format
+        access.warning(line, "127.0.0.1:5000", "GET", "/health", "1.1", 200)
+        access.warning(line, "127.0.0.1:5000", "GET", "/health?probe=1", "1.1", 200)
+        access.warning(line, "127.0.0.1:5000", "POST", "/sessions", "1.1", 201)
+    [path] = list(log_dir.iterdir())
+    text = path.read_text()
+    assert "/health" not in text
+    assert '"POST /sessions HTTP/1.1" 201' in text

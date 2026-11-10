@@ -58,11 +58,13 @@ def a_session(session_id: str = "sess-1", **overrides: object) -> SessionResult:
     return SessionResult.model_validate(data)
 
 
-def a_case(case_id: str, session_id: str = "sess-1", minutes: int = 0) -> CaseRecord:
+def a_case(
+    case_id: str, session_id: str = "sess-1", minutes: int = 0, item_key: str = "JPY 3M"
+) -> CaseRecord:
     return CaseRecord(
         case_id=case_id,
         session_id=session_id,
-        item_key="JPY 3M",
+        item_key=item_key,
         status="open",
         payload={"curve_id": "JPY", "tenor": "3M", "measures": [{"change_bps": 3.0}], "note": "ü"},
         created_at=T0 + timedelta(minutes=minutes),
@@ -125,11 +127,26 @@ def test_cases_listed_per_session_in_creation_order(db: Session) -> None:
     SessionRepo(db).add(a_session("sess-1"))
     SessionRepo(db).add(a_session("sess-2"))
     repo = CaseRepo(db)
-    repo.add(a_case("case-b", minutes=2))
-    repo.add(a_case("case-a", minutes=1))
+    repo.add(a_case("case-b", minutes=2, item_key="GBP 2Y"))
+    repo.add(a_case("case-a", minutes=1, item_key="JPY 3M"))
     repo.add(a_case("case-other", session_id="sess-2"))
     assert [c.case_id for c in repo.list_for_session("sess-1")] == ["case-a", "case-b"]
     assert repo.list_for_session("sess-3") == []
+
+
+def test_one_case_per_item_per_session(db: Session) -> None:
+    SessionRepo(db).add(a_session("sess-1"))
+    CaseRepo(db).add(a_case("case-1"))
+    with pytest.raises(IntegrityError, match="uq_cases_session_id"):
+        CaseRepo(db).add(a_case("case-2"))
+
+
+def test_find_by_item(db: Session) -> None:
+    SessionRepo(db).add(a_session("sess-1"))
+    CaseRepo(db).add(a_case("case-1"))
+    found = CaseRepo(db).find("sess-1", "JPY 3M")
+    assert found is not None and found.case_id == "case-1"
+    assert CaseRepo(db).find("sess-1", "GBP 2Y") is None
 
 
 def test_case_needs_an_existing_session(db: Session) -> None:

@@ -97,3 +97,7 @@ class AzureOpenAIProvider:
             prompt_tokens=usage.prompt_tokens if usage else 0,
             completion_tokens=usage.completion_tokens if usage else 0,
         )
+
+    async def aclose(self) -> None:
+        """Close the HTTP pool now: left to the garbage collector, it may close on a dead loop."""
+        await self._client.close()

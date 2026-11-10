@@ -19,7 +19,7 @@ TABLES = {"sessions", "cases", "audit_events"}
 
 
 def test_database_is_at_head(migrated_engine: Engine) -> None:
-    assert current_revision(migrated_engine) == head_revision() == "0002"
+    assert current_revision(migrated_engine) == head_revision() == "0003"
     assert set(inspect(migrated_engine).get_table_names()) >= TABLES
 
 
@@ -44,6 +44,7 @@ def test_constraint_names_follow_the_convention(migrated_engine: Engine) -> None
         "pk_sessions",
         "pk_cases",
         "fk_cases_session_id_sessions",
+        "uq_cases_session_id",
         "pk_audit_events",
         "uq_audit_events_hash",
         "ck_audit_events_seq_positive",
@@ -56,5 +57,5 @@ def test_downgrade_and_upgrade_again(migrated_engine: Engine) -> None:
     downgrade(migrated_engine, "base")
     assert not TABLES & set(inspect(migrated_engine).get_table_names())
     upgrade(migrated_engine)
-    assert current_revision(migrated_engine) == "0002"
+    assert current_revision(migrated_engine) == "0003"
     assert set(inspect(migrated_engine).get_table_names()) >= TABLES

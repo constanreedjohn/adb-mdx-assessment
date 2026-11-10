@@ -175,6 +175,9 @@ class TrustingProvider:
     async def complete(self, request: LLMRequest) -> LLMResponse:
         return LLMResponse(self._parsed, self._refusal, "", "stub-model", 10, 5)
 
+    async def aclose(self) -> None:
+        pass
+
 
 async def test_gateway_revalidates_whatever_the_provider_returns(
     prompts: PromptStore, audit: InMemoryAuditTrail

@@ -19,7 +19,7 @@ from mdx_assessment.core.orchestration.graph import GraphHooks, SessionRuntime, 
 from mdx_assessment.core.orchestration.playbooks import PlaybookStore, resolve_playbook
 from mdx_assessment.core.orchestration.run_context import context_hook, playbook_hook
 from mdx_assessment.core.orchestration.state import RunState
-from mdx_assessment.core.persistence import InMemoryAuditTrail
+from mdx_assessment.core.persistence import InMemoryAuditTrail, InMemoryCaseStore
 from mdx_assessment.core.tools.client import ToolHub
 from mdx_assessment.core.tools.permissions import PERMISSIONS_PATH, PermissionMatrix
 from mdx_assessment.core.tools.registry import ToolContext
@@ -58,7 +58,7 @@ async def run_session(
     settings = base.model_copy(
         update={"app": AppSettings(config_dir=base.app.config_dir, data_dir=data_dir)}
     )
-    context = ToolContext(config=config, settings=settings, audit=audit)
+    context = ToolContext(config=config, settings=settings, audit=audit, cases=InMemoryCaseStore())
     permissions = config.get(PERMISSIONS_PATH, PermissionMatrix)
     async with ToolHub(registries.tools, permissions, context) as hub:
         runtime = SessionRuntime(
@@ -152,7 +152,11 @@ async def test_live_azure_openai_produces_a_valid_plan(
     config: LoadedConfig, data_dir: Path
 ) -> None:
     audit = InMemoryAuditTrail()
-    final = await run_session(config, data_dir, audit, create_provider())
+    provider = create_provider()
+    try:
+        final = await run_session(config, data_dir, audit, provider)
+    finally:
+        await provider.aclose()
     plan = final.plan
     assert plan is not None
     assert plan.source is PlanSource.MASTER, plan.validation

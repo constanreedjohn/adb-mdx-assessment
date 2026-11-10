@@ -58,8 +58,8 @@ The interactive API docs are at <http://127.0.0.1:8000/docs>.
 | --- | --- |
 | `completed` | The Master Agent's plan passed validation and every step ran |
 | `completed_degraded` | The Master Agent's plan was used, but at least one step failed |
-| `default_complete` | The Master Agent's plan was rejected twice, so the playbook's default plan ran |
-| `failed` | The run stopped because the model or the source system could not be reached, or an unexpected error occurred. `analyst_notice` says so, and the log has the full reason |
+| `default_complete` | The playbook's default plan ran instead of the Master Agent's: the plan was rejected twice, the model could not be reached, there were no facts to plan from, or the run was started with `"llm_enabled": false`. `analyst_notice` says which |
+| `failed` | The run stopped because the day's facts could not be read from the source system. No checks ran. `analyst_notice` says so, and the log has the full reason |
 
 ### Stop or reset
 
