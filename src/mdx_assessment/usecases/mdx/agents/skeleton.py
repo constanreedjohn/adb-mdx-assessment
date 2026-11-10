@@ -6,7 +6,7 @@ E11-01/02); the task IDs, agents and graph stay the same.
 
 - Input Validation is real (E7-01, E7-02, `input_validation.py`): file presence and
   record counts with a completeness finding, then the flags normalized to bps.
-- The Market Data Assessment stub counts the normalized flags it received.
+- Market Data Assessment is real (E8-01, `market_data.py`): the near-zero check.
 - The Escalation and Reporting stub creates no cases yet.
 """
 
@@ -23,18 +23,34 @@ from mdx_assessment.core.orchestration.tasks import (
 )
 from mdx_assessment.core.platform import PlatformRegistries
 from mdx_assessment.core.tools.client import TaskBudget
+from mdx_assessment.usecases.mdx.agents.ids import (
+    CHECK_FILES_AND_INTAKE,
+    ESCALATION_REPORTING,
+    INPUT_VALIDATION,
+    MARKET_DATA_ASSESSMENT,
+    NEAR_ZERO_CHECK,
+    RECORD_CASES,
+)
 from mdx_assessment.usecases.mdx.agents.input_validation import (
     IntakeResult,
     check_files_and_intake,
 )
+from mdx_assessment.usecases.mdx.agents.market_data import (
+    MarketAssessmentResult,
+    near_zero_check,
+)
 
-INPUT_VALIDATION = "input_validation"
-MARKET_DATA_ASSESSMENT = "market_data_assessment"
-ESCALATION_REPORTING = "escalation_reporting"
-
-CHECK_FILES_AND_INTAKE = "input_validation.check_files_and_intake"
-NEAR_ZERO_CHECK = "market_data.near_zero_check"
-RECORD_CASES = "escalation_reporting.record_cases"
+__all__ = [
+    "AGENTS",
+    "CHECK_FILES_AND_INTAKE",
+    "ESCALATION_REPORTING",
+    "INPUT_VALIDATION",
+    "MARKET_DATA_ASSESSMENT",
+    "NEAR_ZERO_CHECK",
+    "RECORD_CASES",
+    "TASKS",
+    "register_skeleton",
+]
 
 AGENTS = (
     AgentDefinition(
@@ -60,18 +76,8 @@ class _Stub(BaseModel):
     stub: Literal[True] = True
 
 
-class AssessmentStubResult(_Stub):
-    items_received: int = Field(ge=0)
-
-
 class CasesStubResult(_Stub):
     cases_created: int = Field(ge=0)
-
-
-async def near_zero_check(ctx: TaskContext) -> AssessmentStubResult:
-    intake = ctx.result_of(CHECK_FILES_AND_INTAKE) or {}
-    flags = intake.get("normalized_flags", [])
-    return AssessmentStubResult(items_received=len(flags) if isinstance(flags, list) else 0)
 
 
 async def record_cases(ctx: TaskContext) -> CasesStubResult:
@@ -91,10 +97,12 @@ TASKS = (
     TaskDefinition(
         id=NEAR_ZERO_CHECK,
         agent=MARKET_DATA_ASSESSMENT,
-        description="Assess each flag for a near-zero threshold artifact against 60-day "
-        "history. (Skeleton stub: counts the items it received.)",
-        output_model=AssessmentStubResult,
+        description="Assess each flag for a near-zero threshold artifact: absolute change, "
+        "relative change only above the near-zero floor, z-score against 60-day history; "
+        "label each item and list them in review order.",
+        output_model=MarketAssessmentResult,
         handler=near_zero_check,
+        budget=TaskBudget(max_calls=60, max_seconds=120),  # one history call per flag
     ),
     TaskDefinition(
         id=RECORD_CASES,

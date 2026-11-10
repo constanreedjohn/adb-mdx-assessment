@@ -1,0 +1,16 @@
+# Near-zero check settings (owner: MDX pack; scenario S2; E8-01).
+# Rules and worked example: docs/business-rules.md. Changing a value is a reviewed,
+# versioned change, recorded with every run through the config version.
+# The near-zero floor itself is per data type, in profiles/data_types.yaml.
+
+version: "1"
+
+history_window_days: 60      # business days of history the normal daily move is measured over
+min_history_changes: 20      # fewer daily changes than this: z isn't computed (too little history)
+large_move_z: 4.0            # |z| at or above this: genuine large move, whatever the rate's level
+artifact_max_change: 5.0     # in the profile's measure unit (bps for rates): above this, never an artifact
+
+provisional: true
+note: >-
+  Placeholders until ADB confirms them (business-rules.md §7, questions 2 and 3).
+  artifact_max_change is the team's proposal, not yet agreed.

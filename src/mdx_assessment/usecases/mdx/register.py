@@ -7,6 +7,9 @@ Filled in as each piece lands:
 - E6-02: agents and stub tasks `input_validation.check_files_and_intake`,
   `market_data.near_zero_check`, `escalation_reporting.record_cases` (agents/skeleton.py)
 - E6-03: run-context facts (facts.py) and their settings (`run_context.yaml`)
+- E7-01/E7-02: Input Validation (agents/input_validation.py)
+- E8-01: near-zero check settings (`near_zero.yaml`) and Market Data Assessment
+  (agents/market_data.py)
 """
 
 from __future__ import annotations
@@ -19,9 +22,11 @@ from mdx_assessment.usecases.mdx.agents.skeleton import register_skeleton
 from mdx_assessment.usecases.mdx.config import (
     DATA_TYPES_PATH,
     EXPECTED_FILES_PATH,
+    NEAR_ZERO_PATH,
     RUN_CONTEXT_PATH,
     DataTypeProfiles,
     ExpectedFiles,
+    NearZeroSettings,
     RunContextSettings,
 )
 from mdx_assessment.usecases.mdx.facts import build_mdx_facts
@@ -51,5 +56,6 @@ def register(registries: PlatformRegistries) -> None:
     registries.config.register(SIM_LINEAR_DAY_PATH, SimLinearDay, owner=USE_CASE_ID, required=False)
     registries.tools.register(MDX_TOOL_SPEC, _mdx_server)
     registries.config.register(RUN_CONTEXT_PATH, RunContextSettings, owner=USE_CASE_ID)
+    registries.config.register(NEAR_ZERO_PATH, NearZeroSettings, owner=USE_CASE_ID)
     registries.facts = build_mdx_facts
     register_skeleton(registries)

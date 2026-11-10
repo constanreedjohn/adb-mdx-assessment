@@ -20,6 +20,7 @@ from mdx_assessment.usecases.mdx.domain import DataType, MarketDataKind, Unit
 DATA_TYPES_PATH = "profiles/data_types.yaml"
 EXPECTED_FILES_PATH = "expected_files.yaml"
 RUN_CONTEXT_PATH = "run_context.yaml"
+NEAR_ZERO_PATH = "near_zero.yaml"
 
 Identifier = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$")]
 
@@ -138,3 +139,29 @@ class RunContextSettings(DomainModel):
     provisional: bool = False
     """True while a value is a placeholder awaiting ADB confirmation."""
     note: str = ""
+
+
+# --- near_zero.yaml ----------------------------------------------------------------
+
+
+class NearZeroSettings(DomainModel):
+    """Settings of the near-zero check (E8-01). Rules: docs/business-rules.md §3."""
+
+    version: str = Field(min_length=1)
+    history_window_days: int = Field(ge=2, le=250)
+    min_history_changes: int = Field(ge=2)
+    large_move_z: float = Field(gt=0)
+    artifact_max_change: float = Field(gt=0)
+    """In the data-type profile's measure unit (bps for rates)."""
+    provisional: bool = False
+    note: str = ""
+
+    @model_validator(mode="after")
+    def _enough_window(self) -> Self:
+        if self.min_history_changes > self.history_window_days - 1:
+            raise ValueError(
+                f"min_history_changes ({self.min_history_changes}) can't exceed the "
+                f"{self.history_window_days - 1} daily changes a {self.history_window_days}-day "
+                "window holds"
+            )
+        return self

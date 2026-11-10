@@ -109,13 +109,21 @@ async def test_input_validation_reads_real_mdx_data(
     intake = final.agent_results["validate_inputs"]
     assert isinstance(intake, dict)
     assert (intake["dataset_complete"], intake["flags_read"]) == (True, 28)
-    assert final.agent_results["assess_movements"] == {"stub": True, "items_received": 28}
+    assessment = final.agent_results["assess_movements"]
+    assert isinstance(assessment, dict)
+    assert assessment["counts"] == {
+        "genuine_large_move": 1,
+        "threshold_artifact": 4,
+        "ordinary": 23,
+        "insufficient_history": 0,
+    }
     tool_calls = [e for e in audit.read() if e.event_type == "tool_call"]
     assert [(e.actor, e.payload["operation"], e.payload["status"]) for e in tool_calls] == [
         ("input_validation", "list_expected_files", "ok"),
         ("input_validation", "get_file_metadata", "ok"),
         ("input_validation", "get_flags", "ok"),
         ("input_validation", "get_curve_values", "ok"),
+        *[("market_data_assessment", "get_history", "ok")] * 28,
     ]
     assert all(e.session_id == "sess-sk" for e in audit.read())
     assert audit.verify().valid
