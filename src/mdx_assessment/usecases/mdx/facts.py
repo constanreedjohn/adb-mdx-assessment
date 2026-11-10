@@ -17,8 +17,15 @@ from pydantic import JsonValue
 from mdx_assessment.core.domain import Fact, RunContext
 from mdx_assessment.core.orchestration.run_context import FactsRequest
 from mdx_assessment.core.tools.client import ToolCallError
+from mdx_assessment.usecases.mdx.checks.completeness import assess_completeness
 from mdx_assessment.usecases.mdx.config import RUN_CONTEXT_PATH, RunContextSettings
-from mdx_assessment.usecases.mdx.tools.mdx import GET_FILE_METADATA, GET_FLAGS, LIST_EXPECTED_FILES
+from mdx_assessment.usecases.mdx.tools.mdx import (
+    GET_FILE_METADATA,
+    GET_FLAGS,
+    LIST_EXPECTED_FILES,
+    ExpectedFilesResult,
+    FileMetadataResult,
+)
 from mdx_assessment.usecases.mdx.tools.mdx import TOOL_ID as MDX_DATA
 
 
@@ -43,12 +50,13 @@ async def build_mdx_facts(request: FactsRequest) -> RunContext:
     typed: dict[str, JsonValue] = {**day, "data_type": state.data_type}
     scope: dict[str, JsonValue] = dict(typed)
 
-    expected = (await request.tools.call(MDX_DATA, LIST_EXPECTED_FILES, typed))["files"]
+    expected = ExpectedFilesResult.model_validate(
+        await request.tools.call(MDX_DATA, LIST_EXPECTED_FILES, typed)
+    ).files
     metadata = await _call_or_none(request, GET_FILE_METADATA, day)
     flags = await _call_or_none(request, GET_FLAGS, typed)
-
-    delivered = {f["file_name"]: f for f in (metadata or {}).get("files", [])}
-    received = [delivered[e["file_name"]] for e in expected if e["file_name"] in delivered]
+    received = FileMetadataResult.model_validate(metadata).files if metadata else []
+    completeness = assess_completeness(expected, received)  # the same check as E7-01
 
     return RunContext(
         facts=(
@@ -56,15 +64,15 @@ async def build_mdx_facts(request: FactsRequest) -> RunContext:
             Fact.create("business_date", business_date, source="session", scope=scope),
             Fact.create(
                 "files_received",
-                len(received),
-                expected=len(expected),
+                completeness.files_received,
+                expected=completeness.files_expected,
                 source=_source(GET_FILE_METADATA),
                 scope=scope,
             ),
             Fact.create(
                 "records_received",
-                sum(f["record_count"] for f in received),
-                expected=sum(e["expected_record_count"] for e in expected),
+                completeness.records_received,
+                expected=completeness.records_expected,
                 source=_source(GET_FILE_METADATA),
                 scope=scope,
             ),

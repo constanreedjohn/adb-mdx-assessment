@@ -1,4 +1,4 @@
-"""Acceptance (E6-02) with the MDX pack: the three stub steps run end to end through the
+"""Acceptance (E6-02) with the MDX pack: the three steps run end to end through the
 real registries, the permission-checked tools and the simulated MDX day."""
 
 from collections.abc import AsyncIterator
@@ -102,17 +102,13 @@ async def test_three_stub_steps_run_end_to_end(
     assert final.status is SessionStatus.COMPLETED
 
 
-async def test_the_input_validation_stub_reads_real_mdx_data(
+async def test_input_validation_reads_real_mdx_data(
     outcome: tuple[RunState, InMemoryAuditTrail],
 ) -> None:
     final, audit = outcome
-    assert final.agent_results["validate_inputs"] == {
-        "stub": True,
-        "files_expected": 1,
-        "files_received": 1,
-        "record_counts": {"mdx_linear_rates_20261015.csv": 80},
-        "flags_read": 28,
-    }
+    intake = final.agent_results["validate_inputs"]
+    assert isinstance(intake, dict)
+    assert (intake["dataset_complete"], intake["flags_read"]) == (True, 28)
     assert final.agent_results["assess_movements"] == {"stub": True, "items_received": 28}
     tool_calls = [e for e in audit.read() if e.event_type == "tool_call"]
     assert [(e.actor, e.payload["operation"], e.payload["status"]) for e in tool_calls] == [

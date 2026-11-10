@@ -13,6 +13,10 @@ from mdx_assessment.usecases.mdx.tools.mdx.server import (
     LIST_EXPECTED_FILES,
     MDX_TOOL_SPEC,
     TOOL_ID,
+    ExpectedFileInfo,
+    ExpectedFilesResult,
+    FileMetadataResult,
+    FlagsResult,
     create_mdx_server,
 )
 
@@ -24,6 +28,10 @@ __all__ = [
     "LIST_EXPECTED_FILES",
     "MDX_TOOL_SPEC",
     "TOOL_ID",
+    "ExpectedFileInfo",
+    "ExpectedFilesResult",
+    "FileMetadataResult",
+    "FlagsResult",
     "MdxBackend",
     "MdxDataError",
     "SimulatedMdxBackend",

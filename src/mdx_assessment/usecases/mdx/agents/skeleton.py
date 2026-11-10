@@ -4,8 +4,8 @@ Registered with core so the dispatcher can run a three-step Normal EOD plan end 
 end. SP3 replaces each stub's handler with the real step (E7-01/02, E8-01/02,
 E11-01/02); the task IDs, agents and graph stay the same.
 
-- The Input Validation stub really reads MDX through its tool client (expected files,
-  file metadata, flags), so the permission matrix and audit already apply.
+- Input Validation is real (E7-01, `input_validation.py`): file presence and record
+  counts, with a completeness finding. Flag normalization follows in E7-02.
 - The Market Data Assessment stub picks the intake result up from the shared state.
 - The Escalation and Reporting stub creates no cases yet.
 """
@@ -23,8 +23,10 @@ from mdx_assessment.core.orchestration.tasks import (
 )
 from mdx_assessment.core.platform import PlatformRegistries
 from mdx_assessment.core.tools.client import TaskBudget
-from mdx_assessment.usecases.mdx.tools.mdx import GET_FILE_METADATA, GET_FLAGS, LIST_EXPECTED_FILES
-from mdx_assessment.usecases.mdx.tools.mdx import TOOL_ID as MDX_DATA
+from mdx_assessment.usecases.mdx.agents.input_validation import (
+    IntakeResult,
+    check_files_and_intake,
+)
 
 INPUT_VALIDATION = "input_validation"
 MARKET_DATA_ASSESSMENT = "market_data_assessment"
@@ -58,33 +60,12 @@ class _Stub(BaseModel):
     stub: Literal[True] = True
 
 
-class IntakeStubResult(_Stub):
-    files_expected: int = Field(ge=0)
-    files_received: int = Field(ge=0)
-    record_counts: dict[str, int]
-    flags_read: int = Field(ge=0)
-
-
 class AssessmentStubResult(_Stub):
     items_received: int = Field(ge=0)
 
 
 class CasesStubResult(_Stub):
     cases_created: int = Field(ge=0)
-
-
-async def check_files_and_intake(ctx: TaskContext) -> IntakeStubResult:
-    day = {"business_date": ctx.inputs.business_date.isoformat()}
-    typed = {**day, "data_type": ctx.inputs.data_type}
-    expected = await ctx.tools.call(MDX_DATA, LIST_EXPECTED_FILES, typed)
-    metadata = await ctx.tools.call(MDX_DATA, GET_FILE_METADATA, day)
-    flags = await ctx.tools.call(MDX_DATA, GET_FLAGS, typed)
-    return IntakeStubResult(
-        files_expected=len(expected["files"]),
-        files_received=len(metadata["files"]),
-        record_counts={f["file_name"]: f["record_count"] for f in metadata["files"]},
-        flags_read=flags["count"],
-    )
 
 
 async def near_zero_check(ctx: TaskContext) -> AssessmentStubResult:
@@ -102,8 +83,8 @@ TASKS = (
         id=CHECK_FILES_AND_INTAKE,
         agent=INPUT_VALIDATION,
         description="Check the expected MDX files arrived with the expected record counts, "
-        "then read the exception flags. (Skeleton stub: reads, doesn't normalize yet.)",
-        output_model=IntakeStubResult,
+        "and record a dataset completeness finding; then read the exception flags.",
+        output_model=IntakeResult,
         handler=check_files_and_intake,
         budget=TaskBudget(max_calls=10, max_seconds=30),
     ),
