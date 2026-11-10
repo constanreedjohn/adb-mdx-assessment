@@ -65,6 +65,7 @@ async def run_session(
             tasks=registries.tasks,
             checks=registries.checks,
             audit=audit,
+            config=config,
             hub=hub,
             gateway=create_llm_gateway(audit, settings=settings, provider=provider),
         )

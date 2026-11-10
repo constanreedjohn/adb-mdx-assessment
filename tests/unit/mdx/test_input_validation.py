@@ -40,6 +40,7 @@ from mdx_assessment.usecases.mdx.sim.writer import write_day
 pytestmark = pytest.mark.anyio
 DAY = date(2026, 10, 15)
 FILE = "mdx_linear_rates_20261015.csv"
+FILE_KINDS = {"expected_file", "file_metadata"}
 
 
 @pytest.fixture
@@ -104,6 +105,7 @@ async def run_step(config: LoadedConfig, data_dir: Path) -> AsyncIterator[Run]:
             step=PlanStep(step_id="validate", task=CHECK_FILES_AND_INTAKE),
             tools_client=hub.client(INPUT_VALIDATION, session_id="s1", task_id="s1/validate"),
             gateway=None,
+            loaded_config=config,
         )
         yield Run(await check_files_and_intake(ctx), audit, hub)
 
@@ -135,9 +137,9 @@ async def test_the_finding_cites_the_recorded_evidence(
     config: LoadedConfig, happy_dir: Path
 ) -> None:
     result = await intake(config, happy_dir)
-    kinds = sorted(e.kind for e in result.evidence)
-    assert kinds == ["expected_file", "file_metadata"]
-    assert set(result.finding.evidence_ids) == {e.evidence_id for e in result.evidence}
+    files = [e for e in result.evidence if e.kind in FILE_KINDS]
+    assert sorted(e.kind for e in files) == ["expected_file", "file_metadata"]
+    assert set(result.finding.evidence_ids) == {e.evidence_id for e in files}
     metadata = next(e for e in result.evidence if e.kind == "file_metadata")
     assert metadata.source == "mdx_data.get_file_metadata"
     assert metadata.data["record_count"] == 80
@@ -155,6 +157,7 @@ async def test_the_step_reads_mdx_as_input_validation(
             "list_expected_files",
             "get_file_metadata",
             "get_flags",
+            "get_curve_values",
         ]
 
 
@@ -194,7 +197,8 @@ async def test_a_missing_file_is_marked_incomplete(
     [check] = result.completeness.files
     assert (check.status, check.received_records) == (FileStatus.MISSING, None)
     assert f"{FILE} was not received" in result.finding.summary
-    assert [e.kind for e in result.evidence] == ["expected_file"]  # nothing received to cite
+    files = [e.kind for e in result.evidence if e.kind in FILE_KINDS]
+    assert files == ["expected_file"]  # nothing received to cite
 
 
 # --- one check for the facts and the agent ---------------------------------------------------

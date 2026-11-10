@@ -20,6 +20,7 @@ from typing import Any
 
 from pydantic import BaseModel, JsonValue
 
+from mdx_assessment.core.config import LoadedConfig
 from mdx_assessment.core.domain import PlanStep, ReviewCheckResult
 from mdx_assessment.core.gateway.gateway import LLMGateway
 from mdx_assessment.core.orchestration.state import ExecutionEntry, RunState
@@ -44,6 +45,14 @@ class TaskContext:
     step: PlanStep
     tools_client: AgentToolClient | None
     gateway: LLMGateway | None
+    loaded_config: LoadedConfig | None = None
+
+    @property
+    def config(self) -> LoadedConfig:
+        """The session's validated `config/` (the same version the session records)."""
+        if self.loaded_config is None:
+            raise RuntimeError("no configuration is available to this run")
+        return self.loaded_config
 
     @property
     def tools(self) -> AgentToolClient:

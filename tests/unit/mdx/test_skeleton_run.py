@@ -77,7 +77,7 @@ async def outcome(
 
     async with hub:
         runtime = SessionRuntime(
-            tasks=registries.tasks, checks=registries.checks, audit=audit, hub=hub
+            tasks=registries.tasks, checks=registries.checks, audit=audit, hub=hub, config=config
         )
         app = build_session_graph(runtime, GraphHooks(plan=default_plan)).compile(
             checkpointer=InMemorySaver(serde=checkpoint_serializer())
@@ -115,6 +115,7 @@ async def test_input_validation_reads_real_mdx_data(
         ("input_validation", "list_expected_files", "ok"),
         ("input_validation", "get_file_metadata", "ok"),
         ("input_validation", "get_flags", "ok"),
+        ("input_validation", "get_curve_values", "ok"),
     ]
     assert all(e.session_id == "sess-sk" for e in audit.read())
     assert audit.verify().valid

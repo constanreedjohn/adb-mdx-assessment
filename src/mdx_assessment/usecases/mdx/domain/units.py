@@ -45,6 +45,29 @@ def change_bps(previous: Percent, current: Percent) -> Bps:
     return percent_to_bps(Percent(current - previous))
 
 
+# Unit conversions that need no market convention. Pips (FX) and vol points from percent
+# need a pip size or quote convention per instrument, so they come with their stories.
+_FACTORS: dict[tuple[Unit, Unit], float] = {
+    (Unit.PERCENT, Unit.BPS): BPS_PER_PERCENT,
+    (Unit.BPS, Unit.PERCENT): 1 / BPS_PER_PERCENT,
+}
+
+
+def conversion_factor(source: Unit, target: Unit) -> float | None:
+    """Multiply a value in `source` by this to get `target`; None if there's no plain rule."""
+    if source is target:
+        return 1.0
+    return _FACTORS.get((source, target))
+
+
+def change_in(previous: float, current: float, source: Unit, target: Unit) -> float | None:
+    """Absolute change `current - previous`, quoted in `source`, expressed in `target`."""
+    factor = conversion_factor(source, target)
+    if factor is None:
+        return None
+    return round((current - previous) * factor, PRECISION_DP)
+
+
 def relative_change_pct(previous: float, current: float) -> float | None:
     """Relative change in percent, as MDX's percentage rule computes it.
 

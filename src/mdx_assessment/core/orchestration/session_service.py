@@ -178,6 +178,7 @@ class SessionService:
                 hub=hub,
                 gateway=gateway,
                 tracer=tracer,
+                config=self._config,
             )
             hooks = GraphHooks(
                 plan=master_plan_hook(

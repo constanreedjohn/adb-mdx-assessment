@@ -4,9 +4,9 @@ Registered with core so the dispatcher can run a three-step Normal EOD plan end 
 end. SP3 replaces each stub's handler with the real step (E7-01/02, E8-01/02,
 E11-01/02); the task IDs, agents and graph stay the same.
 
-- Input Validation is real (E7-01, `input_validation.py`): file presence and record
-  counts, with a completeness finding. Flag normalization follows in E7-02.
-- The Market Data Assessment stub picks the intake result up from the shared state.
+- Input Validation is real (E7-01, E7-02, `input_validation.py`): file presence and
+  record counts with a completeness finding, then the flags normalized to bps.
+- The Market Data Assessment stub counts the normalized flags it received.
 - The Escalation and Reporting stub creates no cases yet.
 """
 
@@ -70,8 +70,8 @@ class CasesStubResult(_Stub):
 
 async def near_zero_check(ctx: TaskContext) -> AssessmentStubResult:
     intake = ctx.result_of(CHECK_FILES_AND_INTAKE) or {}
-    flags = intake.get("flags_read", 0)
-    return AssessmentStubResult(items_received=flags if isinstance(flags, int) else 0)
+    flags = intake.get("normalized_flags", [])
+    return AssessmentStubResult(items_received=len(flags) if isinstance(flags, list) else 0)
 
 
 async def record_cases(ctx: TaskContext) -> CasesStubResult:

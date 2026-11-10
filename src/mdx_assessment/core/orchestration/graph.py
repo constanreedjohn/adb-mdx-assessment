@@ -39,6 +39,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import JsonValue, ValidationError
 from pydantic_core import to_jsonable_python
 
+from mdx_assessment.core.config import LoadedConfig
 from mdx_assessment.core.domain import (
     Decision,
     DecisionKind,
@@ -153,6 +154,7 @@ class SessionRuntime:
     gateway: LLMGateway | None = None
     tracer: Tracer = field(default_factory=lambda: Tracer(None))
     clock: Clock = field(default=lambda: datetime.now(UTC))
+    config: LoadedConfig | None = None
 
     async def record(
         self, state: RunState, actor: str, event_type: str, payload: dict[str, JsonValue]
@@ -275,6 +277,7 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
                     else None
                 ),
                 gateway=runtime.gateway,
+                loaded_config=runtime.config,
             )
             try:
                 with runtime.tracer.span(
