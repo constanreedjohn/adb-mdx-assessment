@@ -27,6 +27,7 @@ from mdx_assessment.core.gateway.provider import LLMRequest
 from mdx_assessment.core.master.planning import (
     MasterPlanOutput,
     master_plan_hook,
+    plan_evidence,
     validate_plan,
 )
 from mdx_assessment.core.orchestration.checkpoint import checkpoint_serializer, thread_config
@@ -125,7 +126,7 @@ def check(
     report = validate_plan(
         MasterPlanOutput.model_validate(data),
         book or playbook(),
-        CONTEXT.citable_ids,
+        plan_evidence(CONTEXT, {}),
         registry(),
     )
     return report.checks, " | ".join(report.errors)
@@ -232,7 +233,7 @@ def test_p3_time_budgets_must_fit_the_run_limit() -> None:
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
-        ({"cited_fact_ids": []}, "cites no facts"),
+        ({"cited_fact_ids": []}, "no evidence is cited"),
         ({"cited_fact_ids": ["fact-invented"]}, "'fact-invented' does not exist"),
         ({"rationale": "See fact-invented."}, "unknown ID 'fact-invented'"),
         (
@@ -245,6 +246,37 @@ def test_p4_evidence(overrides: dict[str, Any], message: str) -> None:
     checks, errors = check(reply(**overrides))
     assert checks["P-4"] is False
     assert message in errors
+
+
+def test_p4_rejects_a_number_that_is_not_in_the_inputs() -> None:
+    checks, errors = check(reply(rationale="28 flags (fact-flag-count), up 45% on last week."))
+    assert checks["P-4"] is False
+    assert "P-4: '45%' does not match the cited evidence" in errors
+
+
+def test_p4_checks_step_rationales_too() -> None:
+    steps = [step(FIRST, rationale="Read all 1,200 records."), step(SECOND)]
+    checks, errors = check(reply(steps=steps))
+    assert checks["P-4"] is False
+    assert "'1,200' does not match" in errors
+
+
+async def test_numbers_from_the_inputs_may_be_quoted(tmp_path: Path) -> None:
+    rationale = "28 flags (fact-flag-count); the steps fit the 600 second run limit."
+    harness = Harness(tmp_path, reply(rationale=rationale))
+    plan = await harness.plan()
+    assert plan.source is PlanSource.MASTER
+
+
+async def test_a_retry_cannot_quote_the_rejected_attempt(tmp_path: Path) -> None:
+    # Attempt 1 invents 45%; the retry's inputs then contain it, but it stays unquotable.
+    invented = reply(rationale="28 flags (fact-flag-count), up 45% on last week.")
+    harness = Harness(tmp_path, [invented, invented])
+    plan = await harness.plan()
+    assert "45%" in harness.fake.requests[1].user_message
+    assert plan.source is PlanSource.DEFAULT
+    assert plan.validation is not None
+    assert plan.validation.checks["P-4"] is False
 
 
 # --- planning: retry and fallback ----------------------------------------------------------

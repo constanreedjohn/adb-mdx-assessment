@@ -1,0 +1,12 @@
+# LLM guardrails (owner: core; PDF §3.2). Changing them is a reviewed, versioned change.
+
+version: "1"
+
+# How numbers in model-written text are matched against the cited evidence (E5-03).
+# Units convert (0.03% is 3 bps). A number may also differ by half a unit of its last
+# written digit, so "18 bps" matches 18.04 bps and "5.1" matches 5.14.
+number_matching:
+  relative_tolerance: 0.001         # extra allowance: 0.1% of the evidence value
+  accept_rounding: true
+  ignore_plain_integers_up_to: 10   # "3 steps", "1 file" aren't checked; "3 bps" always is
+provisional: true                   # tuned on the evaluation set in SP4 (E10-04)

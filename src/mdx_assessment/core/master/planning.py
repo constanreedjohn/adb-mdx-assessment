@@ -9,8 +9,9 @@ data, and returns a plan. Code then validates it:
 - **P-3 Limits:** follow-ups within the round limit (one per round), and the steps'
   combined time budgets within the run limit. The AI-explanation limit can't be judged
   from a plan: it applies when explanations are generated.
-- **P-4 Evidence:** at least one citation, and every cited ID, or ID named in a
-  rationale, exists. Number matching joins this check with E5-03.
+- **P-4 Evidence:** at least one citation; every cited ID, or ID named in a rationale,
+  exists; and every number a rationale states is in the inputs, unit-aware and within
+  the tolerance in `config/guardrails.yaml` (E5-03, `gateway.grounding`).
 
 Invalid output is retried once with the reasons attached. The selected playbook's
 default plan runs, marked `source: default`, if the output still fails, there are no
@@ -22,7 +23,6 @@ to the terminal.
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass, field
 
 from pydantic import JsonValue
@@ -34,7 +34,15 @@ from mdx_assessment.core.domain import (
     PlanStep,
     PlanValidation,
 )
+from mdx_assessment.core.domain.run_context import RunContext
 from mdx_assessment.core.gateway.gateway import LLMGateway
+from mdx_assessment.core.gateway.grounding import (
+    EvidenceBundle,
+    EvidenceItem,
+    check_grounding,
+    quantities_in,
+)
+from mdx_assessment.core.gateway.numbers import NumberTolerance, Quantity, extract_numbers
 from mdx_assessment.core.gateway.provider import LLMError, LLMOutputError
 from mdx_assessment.core.orchestration.graph import (
     FALLBACK_INVALID,
@@ -56,7 +64,6 @@ PROMPT_VERSION = "v1"
 MAX_ATTEMPTS = 2
 
 CHECK_IDS = ("P-1", "P-2", "P-3", "P-4")
-_MENTIONED_ID = re.compile(r"\b(?:fact|obs)-[a-z0-9]+(?:-[a-z0-9]+)*")
 
 
 class PlannedStep(DomainModel):
@@ -75,6 +82,12 @@ class MasterPlanOutput(DomainModel):
     rationale: str
     cited_fact_ids: tuple[str, ...]
 
+    def cited_ids(self) -> tuple[str, ...]:
+        return self.cited_fact_ids
+
+    def grounded_texts(self) -> tuple[str, ...]:
+        return (self.rationale, *(s.rationale for s in (*self.steps, *self.follow_ups)))
+
 
 @dataclass(frozen=True)
 class PlanCheckReport:
@@ -86,10 +99,27 @@ class PlanCheckReport:
         return bool(self.checks) and all(self.checks.values())
 
 
+def plan_evidence(
+    context: RunContext, inputs: JsonValue, tolerance: NumberTolerance | None = None
+) -> EvidenceBundle:
+    """What a plan may cite (facts and observations) and quote (any number in `inputs`)."""
+    items = [
+        EvidenceItem.from_data(
+            f.id, {"value": f.value, "expected": f.expected, "threshold": f.threshold}
+        )
+        for f in context.facts
+    ]
+    items += [
+        EvidenceItem(o.id, tuple(Quantity(n.value, n.unit) for n in extract_numbers(o.text)))
+        for o in context.observations
+    ]
+    return EvidenceBundle.of(items, context=quantities_in(inputs), tolerance=tolerance)
+
+
 def validate_plan(
     output: MasterPlanOutput,
     playbook: ResolvedPlaybook,
-    citable_ids: frozenset[str],
+    evidence: EvidenceBundle,
     tasks: TaskRegistry,
 ) -> PlanCheckReport:
     """P-1 to P-4 against the selected playbook. Pure: no LLM, no I/O."""
@@ -97,7 +127,7 @@ def validate_plan(
         "P-1": _mandatory_steps(output, playbook),
         "P-2": _allowed_actions(output, playbook),
         "P-3": _limits(output, playbook, tasks),
-        "P-4": _evidence(output, citable_ids),
+        "P-4": list(check_grounding(output, evidence).errors),
     }
     return PlanCheckReport(
         checks={check: not errors for check, errors in by_check.items()},
@@ -157,17 +187,6 @@ def _limits(output: MasterPlanOutput, playbook: ResolvedPlaybook, tasks: TaskReg
             f"the steps' time budgets total {budgeted:g}s, over the run limit of "
             f"{limits.max_run_seconds}s"
         )
-    return errors
-
-
-def _evidence(output: MasterPlanOutput, citable_ids: frozenset[str]) -> list[str]:
-    errors = [] if output.cited_fact_ids else ["the plan cites no facts or observations"]
-    errors += [
-        f"cited ID {i!r} does not exist" for i in output.cited_fact_ids if i not in citable_ids
-    ]
-    texts = [output.rationale, *(s.rationale for s in (*output.steps, *output.follow_ups))]
-    mentioned = {match for text in texts for match in _MENTIONED_ID.findall(text)}
-    errors += [f"rationale names unknown ID {i!r}" for i in sorted(mentioned - citable_ids)]
     return errors
 
 
@@ -235,8 +254,11 @@ def _default_plan(
     )
 
 
-def master_plan_hook(runtime: SessionRuntime) -> PlanHook:
-    """The graph's `plan` hook. Needs the runtime's LLM gateway unless the LLM is off."""
+def master_plan_hook(runtime: SessionRuntime, tolerance: NumberTolerance | None = None) -> PlanHook:
+    """The graph's `plan` hook. Needs the runtime's LLM gateway unless the LLM is off.
+
+    `tolerance` is `config/guardrails.yaml`'s `number_matching`.
+    """
     gateway: LLMGateway | None = runtime.gateway
 
     async def plan(state: RunState) -> Plan:
@@ -253,6 +275,11 @@ def master_plan_hook(runtime: SessionRuntime) -> PlanHook:
             logger.warning("session %s: using the default plan (no facts)", state.session_id)
             return _default_plan(playbook, FALLBACK_NO_FACTS, 0, {}, ())
 
+        # From the first attempt's inputs: a retry's inputs hold the rejected output, whose
+        # numbers mustn't become quotable.
+        evidence = plan_evidence(
+            state.run_context, planning_inputs(state, playbook, runtime.tasks, None), tolerance
+        )
         previous: dict[str, JsonValue] | None = None
         report = PlanCheckReport(checks={})
         for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -281,7 +308,7 @@ def master_plan_hook(runtime: SessionRuntime) -> PlanHook:
                 )
             else:
                 output = result.output
-                report = validate_plan(output, playbook, citable, runtime.tasks)
+                report = validate_plan(output, playbook, evidence, runtime.tasks)
 
             dumped = output.model_dump(mode="json") if output is not None else None
             with runtime.tracer.span(

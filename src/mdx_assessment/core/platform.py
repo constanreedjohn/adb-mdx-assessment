@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from mdx_assessment.core.config import ConfigSchemaRegistry
+from mdx_assessment.core.gateway.grounding import GUARDRAILS_PATH, GuardrailsConfig
 from mdx_assessment.core.orchestration.graph import MASTER_AGENT
 from mdx_assessment.core.orchestration.playbooks import PLAYBOOKS_PATTERN, PlaybookDocument
 from mdx_assessment.core.orchestration.run_context import FactsBuilder
@@ -57,6 +58,7 @@ def create_platform_registries() -> PlatformRegistries:
     registries = PlatformRegistries()
     registries.config.register(PLAYBOOKS_PATTERN, PlaybookDocument, owner="core")
     registries.config.register(PERMISSIONS_PATH, PermissionMatrix, owner="core")
+    registries.config.register(GUARDRAILS_PATH, GuardrailsConfig, owner="core")
     registries.tools.register(AUDIT_TOOL_SPEC, lambda ctx: create_audit_server(ctx.audit))
     registries.tools.register(CASES_TOOL_SPEC, lambda ctx: create_cases_server(ctx.cases))
     registries.agents.register(

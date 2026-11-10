@@ -25,6 +25,14 @@ class LLMOutputError(LLMError):
     """The model replied, but not with usable output (refusal, invalid structure, bad value)."""
 
 
+class LLMGroundingError(LLMOutputError):
+    """The output cites evidence that isn't there, or states numbers the evidence lacks."""
+
+    def __init__(self, problems: tuple[str, ...]) -> None:
+        self.problems = problems
+        super().__init__("not backed by the evidence: " + "; ".join(problems))
+
+
 @dataclass(frozen=True)
 class LLMRequest:
     prompt_id: str

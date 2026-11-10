@@ -16,8 +16,11 @@ What every call gets, whichever provider (Azure OpenAI, or the fake in CI):
 - **Logging**: one audit event (`llm_call`) and one trace span per call, with
   provider, deployment, model, prompt version, tokens and latency.
 
-Added in SP3: evidence citation and number matching (E5-03); untrusted-content
-wrapping, one retry and the template fallback (E5-04).
+- **Grounding** (when the caller passes `evidence`): every cited ID exists and every
+  number in the output's texts matches the cited evidence (`grounding.check_grounding`).
+  Output that fails is rejected with `LLMGroundingError`, audited as `ungrounded`.
+
+Added in SP3 with E5-04: untrusted-content wrapping, one retry and the template fallback.
 """
 
 from __future__ import annotations
@@ -33,17 +36,19 @@ from pydantic import BaseModel, JsonValue, ValidationError
 
 from mdx_assessment.core.config import ConfigError, load_prompt
 from mdx_assessment.core.domain import NewAuditEvent
+from mdx_assessment.core.gateway.grounding import EvidenceBundle, Grounded, check_grounding
 from mdx_assessment.core.gateway.provider import (
     LLMError,
+    LLMGroundingError,
     LLMOutputError,
     LLMProvider,
     LLMRequest,
 )
-from mdx_assessment.core.observability.tracing import Tracer
+from mdx_assessment.core.observability.tracing import Tracer, TraceSpan
 from mdx_assessment.core.persistence.audit import AuditTrail
 
 LLM_CALL_EVENT = "llm_call"
-Outcome = Literal["ok", "output_error", "unavailable", "prompt_error"]
+Outcome = Literal["ok", "output_error", "ungrounded", "unavailable", "prompt_error"]
 
 
 @dataclass
@@ -103,8 +108,16 @@ class LLMGateway:
         output_model: type[M],
         actor: str,
         session_id: str | None,
+        evidence: EvidenceBundle | None = None,
+        require_citation: bool = True,
     ) -> GatewayResult[M]:
-        """One governed call. Raises LLMOutputError or LLMUnavailableError (both audited)."""
+        """One governed call. Raises LLMOutputError or LLMUnavailableError (both audited).
+
+        With `evidence`, `output_model` must be `Grounded`, and output that isn't backed by
+        the evidence raises `LLMGroundingError`.
+        """
+        if evidence is not None and not _is_grounded(output_model):
+            raise TypeError(f"{output_model.__name__} must implement Grounded to be checked")
         started = time.perf_counter()
         outcome: Outcome = "unavailable"
         model, tokens_in, tokens_out, error = self.provider.deployment, 0, 0, ""
@@ -132,6 +145,8 @@ class LLMGateway:
                 model = response.model
                 tokens_in, tokens_out = response.prompt_tokens, response.completion_tokens
                 output = self._validated(response.parsed, response.refusal, output_model)
+                if evidence is not None:
+                    self._check_grounding(output, evidence, require_citation, generation)
                 if generation is not None:
                     generation.update(
                         output=output.model_dump(mode="json"),
@@ -150,6 +165,9 @@ class LLMGateway:
                 completion_tokens=tokens_out,
                 latency_ms=_ms_since(started),
             )
+        except LLMGroundingError as exc:
+            outcome, error = "ungrounded", str(exc)
+            raise
         except LLMOutputError as exc:
             if outcome != "prompt_error":
                 outcome = "output_error"
@@ -186,6 +204,20 @@ class LLMGateway:
             fields = sorted({".".join(map(str, e["loc"])) for e in exc.errors()})
             raise LLMOutputError(f"invalid {output_model.__name__}: {', '.join(fields)}") from exc
 
+    @staticmethod
+    def _check_grounding(
+        output: BaseModel,
+        evidence: EvidenceBundle,
+        require_citation: bool,
+        generation: TraceSpan | None,
+    ) -> None:
+        assert isinstance(output, Grounded)  # checked against the output model above
+        report = check_grounding(output, evidence, require_citation=require_citation)
+        if not report.ok:
+            if generation is not None:
+                generation.update(error="; ".join(report.errors)[:500])
+            raise LLMGroundingError(report.errors)
+
     async def _record(
         self,
         actor: str,
@@ -216,6 +248,11 @@ class LLMGateway:
             session_id=session_id, actor=actor, event_type=LLM_CALL_EVENT, payload=payload
         )
         await asyncio.to_thread(self._audit.append, event)
+
+
+def _is_grounded(model: type[BaseModel]) -> bool:
+    """Checked before the call, so a wiring mistake costs no tokens."""
+    return issubclass(model, Grounded)
 
 
 def _ms_since(started: float) -> float:

@@ -29,6 +29,7 @@ from mdx_assessment.core.domain import (
     Versions,
 )
 from mdx_assessment.core.gateway import LLMGateway, create_llm_gateway
+from mdx_assessment.core.gateway.grounding import GUARDRAILS_PATH, GuardrailsConfig
 from mdx_assessment.core.master.planning import PROMPT_ID, PROMPT_VERSION, master_plan_hook
 from mdx_assessment.core.observability.tracing import TraceHandle, Tracer, build_tracer
 from mdx_assessment.core.orchestration.checkpoint import thread_config
@@ -179,7 +180,9 @@ class SessionService:
                 tracer=tracer,
             )
             hooks = GraphHooks(
-                plan=master_plan_hook(runtime),
+                plan=master_plan_hook(
+                    runtime, self._config.get(GUARDRAILS_PATH, GuardrailsConfig).number_matching
+                ),
                 gather_context=context_hook(registries.facts, hub, self._config),
                 select_playbook=playbook_hook(PlaybookStore.from_config(self._config)),
             )
