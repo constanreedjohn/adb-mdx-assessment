@@ -21,6 +21,9 @@ What every call gets, whichever provider (Azure OpenAI, or the fake in CI):
   and validated again through it, so `Literal`/`Enum` fields and validators always apply.
 - **Grounding** (`evidence`): every cited ID exists and every number in the output's
   texts matches the cited evidence (`grounding.check_grounding`).
+- **Caller checks** (`check`): a function returning the problems it finds in the output
+  (for example per-item grounding in a batched call). Problems reject the output like
+  any other, so they get the same retry and fallback.
 - **One retry**: output that is invalid, ungrounded or refused is retried once, with
   the reasons appended to the message. An unreachable model isn't retried here: the
   provider already has.
@@ -38,7 +41,7 @@ import asyncio
 import json
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -54,6 +57,7 @@ from mdx_assessment.core.gateway.provider import (
     LLMOutputError,
     LLMPromptError,
     LLMProvider,
+    LLMRejectedError,
     LLMRequest,
     LLMUnavailableError,
     invalid_output,
@@ -64,7 +68,7 @@ from mdx_assessment.core.persistence.audit import AuditTrail
 LLM_CALL_EVENT = "llm_call"
 LLM_FALLBACK_EVENT = "llm_fallback"
 DEFAULT_ATTEMPTS = 2
-Outcome = Literal["ok", "output_error", "ungrounded", "unavailable", "prompt_error"]
+Outcome = Literal["ok", "output_error", "ungrounded", "rejected", "unavailable", "prompt_error"]
 Source = Literal["llm", "template_fallback"]
 
 UNTRUSTED_POLICY = """
@@ -167,6 +171,7 @@ class LLMGateway:
         untrusted: Mapping[str, str] | None = None,
         max_attempts: int = DEFAULT_ATTEMPTS,
         fallback: Callable[[], M] | None = None,
+        check: Callable[[M], Sequence[str]] | None = None,
     ) -> GatewayResult[M]:
         """One governed call, retried once if the output is unusable.
 
@@ -207,15 +212,14 @@ class LLMGateway:
                     usage,
                     evidence,
                     require_citation,
+                    check,
                 )
             except LLMUnavailableError as exc:
                 last_error = exc
                 break
             except LLMOutputError as exc:
                 last_error = exc
-                rejections.extend(
-                    exc.problems if isinstance(exc, LLMGroundingError) else [str(exc)]
-                )
+                rejections.extend(exc.problems if isinstance(exc, LLMRejectedError) else [str(exc)])
                 continue
             return self._result(output, request, usage, started, "llm", attempt, rejections)
 
@@ -259,6 +263,7 @@ class LLMGateway:
         usage: _Usage,
         evidence: EvidenceBundle | None,
         require_citation: bool,
+        check: Callable[[M], Sequence[str]] | None = None,
     ) -> M:
         """One model call: one trace span and one audit event, whatever the outcome."""
         started = time.perf_counter()
@@ -286,6 +291,9 @@ class LLMGateway:
                     output = self._validated(response.parsed, response.refusal, output_model)
                     if evidence is not None:
                         self._check_grounding(output, evidence, require_citation)
+                    problems = tuple(check(output)) if check is not None else ()
+                    if problems:
+                        raise LLMRejectedError(problems)
                 except LLMError as exc:
                     if generation is not None:
                         generation.update(error=str(exc)[:500])
@@ -301,6 +309,9 @@ class LLMGateway:
             return output
         except LLMGroundingError as exc:
             outcome, error = "ungrounded", str(exc)
+            raise
+        except LLMRejectedError as exc:
+            outcome, error = "rejected", str(exc)
             raise
         except LLMOutputError as exc:
             outcome, error = "output_error", str(exc)

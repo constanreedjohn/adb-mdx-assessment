@@ -83,6 +83,8 @@ class TaskDefinition:
     input_model: type[BaseModel] = TaskInput
     review_checks: tuple[str, ...] = ()
     budget: TaskBudget = field(default_factory=TaskBudget)
+    prompts: tuple[tuple[str, str], ...] = ()
+    """(prompt ID, version) pairs the task may call, recorded with every session."""
 
 
 @dataclass(frozen=True)

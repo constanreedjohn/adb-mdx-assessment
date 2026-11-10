@@ -18,6 +18,7 @@ from mdx_assessment.core.gateway import (
     LLMGroundingError,
     LLMOutputError,
     LLMPromptError,
+    LLMRejectedError,
     LLMRequest,
     LLMUnavailableError,
     PromptStore,
@@ -236,3 +237,31 @@ async def test_untrusted_names_must_be_snake_case(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="snake_case"):
         await setup.call(untrusted={'x" onload="': "text"})
     assert setup.fake.requests == []
+
+
+# --- caller checks ---------------------------------------------------------------------------
+
+
+def no_monitor(output: Explanation) -> list[str]:
+    return ["label 'monitor' isn't allowed here"] if output.label == "monitor" else []
+
+
+async def test_a_caller_check_rejects_and_is_retried_with_its_reasons(tmp_path: Path) -> None:
+    setup = Setup(tmp_path, [GOOD, {**GOOD, "label": "likely_valid"}])
+    result = await setup.call(check=no_monitor)
+    assert (result.output.label, result.attempts) == ("likely_valid", 2)
+    assert result.rejections == ("label 'monitor' isn't allowed here",)
+    assert "- label 'monitor' isn't allowed here" in setup.fake.requests[1].user_message
+    assert setup.outcomes() == [("llm_call", "rejected"), ("llm_call", "ok")]
+
+
+async def test_a_caller_check_failing_twice_ends_with_the_template(tmp_path: Path) -> None:
+    setup = Setup(tmp_path, GOOD)
+    result = await setup.call(check=no_monitor, fallback=lambda: TEMPLATE)
+    assert result.source == "template_fallback"
+    assert result.rejections == ("label 'monitor' isn't allowed here",) * 2
+
+
+async def test_without_a_fallback_a_failing_check_raises(tmp_path: Path) -> None:
+    with pytest.raises(LLMRejectedError, match="rejected: label 'monitor'"):
+        await Setup(tmp_path, GOOD).call(check=no_monitor)

@@ -127,7 +127,7 @@ def test_post_then_get_on_the_simulated_day(client: TestClient, config: LoadedCo
     assert session["agent_results"]["s0"]["flags_read"] == 28
     assert session["versions"] == {
         "config": config.version,
-        "prompts": {"master_plan": "v1"},
+        "prompts": {"master_plan": "v1", "mda_explain": "v1"},
         "llm_deployment": "fake",
         "ml_model": None,
     }

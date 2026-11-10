@@ -23,6 +23,10 @@ from mdx_assessment.core.orchestration.tasks import (
 )
 from mdx_assessment.core.platform import PlatformRegistries
 from mdx_assessment.core.tools.client import TaskBudget
+from mdx_assessment.usecases.mdx.agents.explanations import PROMPT_ID as EXPLAIN_PROMPT_ID
+from mdx_assessment.usecases.mdx.agents.explanations import (
+    PROMPT_VERSION as EXPLAIN_PROMPT_VERSION,
+)
 from mdx_assessment.usecases.mdx.agents.ids import (
     CHECK_FILES_AND_INTAKE,
     ESCALATION_REPORTING,
@@ -99,10 +103,11 @@ TASKS = (
         agent=MARKET_DATA_ASSESSMENT,
         description="Assess each flag for a near-zero threshold artifact: absolute change, "
         "relative change only above the near-zero floor, z-score against 60-day history; "
-        "label each item and list them in review order.",
+        "label each item, list them in review order and explain each in plain words.",
         output_model=MarketAssessmentResult,
         handler=near_zero_check,
         budget=TaskBudget(max_calls=60, max_seconds=120),  # one history call per flag
+        prompts=((EXPLAIN_PROMPT_ID, EXPLAIN_PROMPT_VERSION),),
     ),
     TaskDefinition(
         id=RECORD_CASES,

@@ -29,12 +29,20 @@ class LLMPromptError(LLMOutputError):
     """The prompt file is missing or unreadable: a configuration fault, never retried."""
 
 
-class LLMGroundingError(LLMOutputError):
-    """The output cites evidence that isn't there, or states numbers the evidence lacks."""
+class LLMRejectedError(LLMOutputError):
+    """Valid output that a check rejected, with every reason (retried with them attached)."""
+
+    prefix = "rejected"
 
     def __init__(self, problems: tuple[str, ...]) -> None:
         self.problems = problems
-        super().__init__("not backed by the evidence: " + "; ".join(problems))
+        super().__init__(f"{self.prefix}: " + "; ".join(problems))
+
+
+class LLMGroundingError(LLMRejectedError):
+    """The output cites evidence that isn't there, or states numbers the evidence lacks."""
+
+    prefix = "not backed by the evidence"
 
 
 def invalid_output(model: type[BaseModel], exc: ValidationError) -> LLMOutputError:

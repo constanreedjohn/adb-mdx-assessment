@@ -1,16 +1,18 @@
-"""Market Data Assessment Agent, task `market_data.near_zero_check` (E8-01; E8-02 next).
+"""Market Data Assessment Agent, task `market_data.near_zero_check` (E8-01, E8-02).
 
-Deterministic core, no LLM:
+Deterministic core, then explanation:
 
 1. Take the normalized flags and data-type profiles from the intake step's result.
 2. For each flag, read the point's history through the MDX tool and measure its normal
    daily move (`history_stats`), recorded as evidence.
-3. Label it with `assess_near_zero` (docs/business-rules.md §3) and write one finding
-   per flag citing the raw flag, the stored point and the history.
+3. Label it with `assess_near_zero` (docs/business-rules.md §3), record the measures as
+   evidence, and write one finding per flag citing the raw flag, the stored point, the
+   history and the measures.
 4. List the items in review order: severity first, then the largest |z|.
+5. Explain each item in plain words (`explanations.explain`, E8-02): one batched LLM
+   call, every number checked against the item's own evidence, templates as fallback.
 
-The labels come only from here. E8-02 adds an LLM explanation per item, which can't
-change a label.
+The labels come only from steps 1 to 4. An explanation can't change one.
 """
 
 from __future__ import annotations
@@ -20,8 +22,14 @@ from collections import Counter
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from mdx_assessment.core.domain import Evidence, Finding, Measure
+from mdx_assessment.core.gateway.grounding import GUARDRAILS_PATH, GuardrailsConfig
 from mdx_assessment.core.orchestration.tasks import TaskContext
-from mdx_assessment.usecases.mdx.agents.ids import CHECK_FILES_AND_INTAKE
+from mdx_assessment.usecases.mdx.agents.explanations import (
+    Explanation,
+    ItemToExplain,
+    explain,
+)
+from mdx_assessment.usecases.mdx.agents.ids import CHECK_FILES_AND_INTAKE, NEAR_ZERO_CHECK
 from mdx_assessment.usecases.mdx.agents.input_validation import IntakeResult
 from mdx_assessment.usecases.mdx.checks.near_zero import (
     Classification,
@@ -32,10 +40,12 @@ from mdx_assessment.usecases.mdx.checks.near_zero import (
     review_order,
 )
 from mdx_assessment.usecases.mdx.checks.normalize import NormalizedFlag
-from mdx_assessment.usecases.mdx.config import NEAR_ZERO_PATH, NearZeroSettings
-from mdx_assessment.usecases.mdx.domain import Series
+from mdx_assessment.usecases.mdx.config import NEAR_ZERO_PATH, DataTypeProfile, NearZeroSettings
+from mdx_assessment.usecases.mdx.domain import ExplanationSource, Series, Unit
 from mdx_assessment.usecases.mdx.tools.mdx import GET_HISTORY
 from mdx_assessment.usecases.mdx.tools.mdx import TOOL_ID as MDX_DATA
+
+DEFAULT_MAX_AI_EXPLANATIONS = 100
 
 
 class AssessedItem(BaseModel):
@@ -43,6 +53,7 @@ class AssessedItem(BaseModel):
 
     assessment: NearZeroAssessment
     finding: Finding
+    explanation: Explanation
 
 
 class MarketAssessmentResult(BaseModel):
@@ -51,8 +62,13 @@ class MarketAssessmentResult(BaseModel):
     items: tuple[AssessedItem, ...]
     """In review order."""
     counts: dict[Classification, int]
+    explanation_sources: dict[ExplanationSource, int]
+    explanation_attempts: int = Field(ge=0)
+    """LLM calls made for the explanations (0 when templates were used without one)."""
+    explanation_rejections: tuple[str, ...] = ()
+    """Why rejected explanation attempts were rejected."""
     evidence: tuple[Evidence, ...] = Field(default=())
-    """The history records this step added; flags and points are the intake step's."""
+    """The records this step added; flags and points are the intake step's."""
     not_assessed: tuple[str, ...] = ()
     """Flag IDs the intake step couldn't normalize, carried for reconciliation (C-1)."""
 
@@ -70,27 +86,71 @@ def _summary(a: NearZeroAssessment, unit: str) -> str:
     return f"{a.item_key}: {rel}, {a.change:+.2f} {unit}{z}: {label}."
 
 
-def _finding(a: NearZeroAssessment, flag: NormalizedFlag, history_evidence: Evidence) -> Finding:
-    ids = (*flag.evidence_ids, history_evidence.evidence_id)
+def measure_units(profile: DataTypeProfile) -> dict[str, Unit]:
+    """The unit of each number field in the evidence records, for number matching."""
+    quote, measure = profile.quote_unit, profile.measure_unit
+    return {
+        "previous_value": quote,
+        "current_value": quote,
+        "value": quote,
+        "previous": quote,
+        "current": quote,
+        "near_zero_floor": quote,
+        "relative_change_pct": Unit.PERCENT,
+        "change": measure,
+        "normal_daily_move": measure,
+        "stdev": measure,
+        "artifact_max_change": measure,
+    }
+
+
+def _measures_evidence(
+    a: NearZeroAssessment, profile: DataTypeProfile, settings: NearZeroSettings
+) -> Evidence:
+    """What the check computed and the settings it used: citable, so explanations can
+    quote "+3 bps" or "z 0.85" and have them checked."""
+    data: dict[str, JsonValue] = {
+        "flag_id": a.flag_id,
+        "previous": a.previous,
+        "current": a.current,
+        "change": a.change,
+        "relative_change_pct": a.relative_change_pct,
+        "relative_change_reliable": a.relative_change_reliable,
+        "z": a.z,
+        "normal_daily_move": a.history.stdev,
+        "near_zero_floor": profile.near_zero_floor,
+        "large_move_z": settings.large_move_z,
+        "artifact_max_change": settings.artifact_max_change,
+        "quote_unit": profile.quote_unit.value,
+        "measure_unit": profile.measure_unit.value,
+    }
+    return Evidence.create("near_zero_measures", NEAR_ZERO_CHECK, data)
+
+
+def _finding(
+    a: NearZeroAssessment, flag: NormalizedFlag, history: Evidence, measures: Evidence
+) -> Finding:
+    ids = (*flag.evidence_ids, history.evidence_id, measures.evidence_id)
     unit = flag.measure_unit.value
-    measures = [Measure(name="change", value=a.change, unit=unit, evidence_ids=flag.evidence_ids)]
+    computed = (measures.evidence_id,)
+    rows = [Measure(name="change", value=a.change, unit=unit, evidence_ids=computed)]
     if a.relative_change_pct is not None:
-        measures.append(
+        rows.append(
             Measure(
                 name="relative_change",
                 value=a.relative_change_pct,
                 unit="percent",
-                evidence_ids=flag.evidence_ids,
+                evidence_ids=computed,
             )
         )
     if a.z is not None and a.history.stdev is not None:
-        measures += [
-            Measure(name="z", value=a.z, unit="z", evidence_ids=ids),
+        rows += [
+            Measure(name="z", value=a.z, unit="z", evidence_ids=computed),
             Measure(
                 name="normal_daily_move",
                 value=a.history.stdev,
                 unit=unit,
-                evidence_ids=(history_evidence.evidence_id,),
+                evidence_ids=(history.evidence_id,),
             ),
         ]
     return Finding(
@@ -99,7 +159,7 @@ def _finding(a: NearZeroAssessment, flag: NormalizedFlag, history_evidence: Evid
         subject=a.item_key,
         summary=_summary(a, unit),
         severity=a.severity,
-        measures=tuple(measures),
+        measures=tuple(rows),
         evidence_ids=ids,
     )
 
@@ -122,9 +182,10 @@ async def near_zero_check(ctx: TaskContext) -> MarketAssessmentResult:
     intake = IntakeResult.model_validate(raw)
     settings = ctx.config.get(NEAR_ZERO_PATH, NearZeroSettings)
     today = ctx.inputs.business_date
+    intake_evidence = {e.evidence_id: e for e in intake.evidence}
 
-    items: list[AssessedItem] = []
-    evidence: list[Evidence] = []
+    by_flag: dict[str, ItemToExplain] = {}
+    added: list[Evidence] = []
     for flag in intake.normalized_flags:
         profile = intake.profiles[flag.kind]
         series = Series.model_validate(
@@ -141,18 +202,50 @@ async def near_zero_check(ctx: TaskContext) -> MarketAssessmentResult:
         )
         stats = history_stats(series.observations, today, profile, settings)
         assessment = assess_near_zero(flag, stats, profile, settings)
-        record = _history_evidence(flag, stats, settings.history_window_days)
-        evidence.append(record)
-        items.append(
-            AssessedItem(assessment=assessment, finding=_finding(assessment, flag, record))
+        history = _history_evidence(flag, stats, settings.history_window_days)
+        measures = _measures_evidence(assessment, profile, settings)
+        added += [history, measures]
+        records = [intake_evidence[i] for i in flag.evidence_ids] + [history, measures]
+        by_flag[flag.flag_id] = ItemToExplain(
+            assessment=assessment,
+            finding=_finding(assessment, flag, history, measures),
+            evidence=tuple(records),
+            units=measure_units(profile),
+            measure_unit=profile.measure_unit,
+            comment=flag.comment,
         )
 
-    ordered = review_order([i.assessment for i in items])
-    by_flag = {i.assessment.flag_id: i for i in items}
+    ordered = [by_flag[a.flag_id] for a in review_order([i.assessment for i in by_flag.values()])]
+    playbook = ctx.state.playbook
+    outcome = await explain(
+        ordered,
+        gateway=ctx.gateway,
+        llm_enabled=ctx.state.llm_enabled,
+        session_id=ctx.inputs.session_id,
+        max_ai_explanations=(
+            playbook.content.limits.max_ai_explanations
+            if playbook is not None
+            else DEFAULT_MAX_AI_EXPLANATIONS
+        ),
+        tolerance=ctx.config.get(GUARDRAILS_PATH, GuardrailsConfig).number_matching,
+    )
+
+    items = tuple(
+        AssessedItem(
+            assessment=i.assessment,
+            finding=i.finding,
+            explanation=outcome.explanations[i.assessment.flag_id],
+        )
+        for i in ordered
+    )
     counts = Counter(i.assessment.classification for i in items)
+    sources = Counter(i.explanation.source for i in items)
     return MarketAssessmentResult(
-        items=tuple(by_flag[a.flag_id] for a in ordered),
+        items=items,
         counts={c: counts.get(c, 0) for c in Classification},
-        evidence=tuple({e.evidence_id: e for e in evidence}.values()),
+        explanation_sources={s: sources.get(s, 0) for s in ExplanationSource},
+        explanation_attempts=outcome.llm_attempts,
+        explanation_rejections=outcome.rejections,
+        evidence=tuple({e.evidence_id: e for e in added}.values()),
         not_assessed=tuple(i.flag_id for i in intake.flag_issues),
     )

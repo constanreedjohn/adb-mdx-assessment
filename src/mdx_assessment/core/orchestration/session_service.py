@@ -92,7 +92,9 @@ class SessionService:
         """Run a session to its end (synchronously for now) and return the stored result."""
         session_id = f"sess-{uuid.uuid4().hex[:12]}"
         started_at = datetime.now(UTC)
-        versions = Versions(config=self._config.version, prompts={PROMPT_ID: PROMPT_VERSION})
+        prompts = {PROMPT_ID: PROMPT_VERSION}
+        prompts.update(p for task in self._registries.tasks for p in task.prompts)
+        versions = Versions(config=self._config.version, prompts=prompts)
         initial = RunState(
             session_id=session_id,
             business_date=business_date,
