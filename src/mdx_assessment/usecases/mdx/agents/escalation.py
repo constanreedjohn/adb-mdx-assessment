@@ -1,4 +1,4 @@
-"""Escalation and Reporting Agent, task `escalation_reporting.record_cases` (E11-01).
+"""Escalation and Reporting Agent, task `escalation_reporting.record_cases` (E11-01, E11-02).
 
 Code only, no LLM. One case per flag, written through the exception cases tool (the
 only agent allowed to), status `open`, in the order the analyst should read them:
@@ -12,6 +12,11 @@ and the report, a suggested action, and the investigation trail (the rule trace,
 tools the student called and why, every teacher decision), with every evidence ID it
 rests on. Cases are created in list order, so the store lists them in that order; each
 also carries its `rank`.
+
+Then the **raw run report** (E11-02): the day's figures, counted by code from the run's
+own results, so they are right even when the LLM is down. Files checked, flags read and
+normalized, flags assessed and investigated, labels, verdicts, tools called, send-backs,
+the teacher's decisions and cases created.
 """
 
 from __future__ import annotations
@@ -25,10 +30,16 @@ from mdx_assessment.core.domain import DomainModel, ItemDecision, ItemDecisionKi
 from mdx_assessment.core.orchestration.tasks import TaskContext
 from mdx_assessment.core.tools.cases import CREATE_CASE
 from mdx_assessment.core.tools.cases import TOOL_ID as CASES
-from mdx_assessment.usecases.mdx.agents.ids import NEAR_ZERO_CHECK
+from mdx_assessment.usecases.mdx.agents.ids import (
+    CHECK_FILES_AND_INTAKE,
+    NEAR_ZERO_CHECK,
+    REVISE_DRAFTS,
+)
+from mdx_assessment.usecases.mdx.agents.input_validation import IntakeResult
 from mdx_assessment.usecases.mdx.agents.investigate import ToolCallRecord
 from mdx_assessment.usecases.mdx.agents.market_data import MarketAssessmentResult
 from mdx_assessment.usecases.mdx.agents.teacher import validated_drafts
+from mdx_assessment.usecases.mdx.checks.near_zero import Classification
 from mdx_assessment.usecases.mdx.checks.verdict import Verdict
 from mdx_assessment.usecases.mdx.domain import ExplanationSource
 
@@ -102,6 +113,56 @@ class CaseLine(BaseModel):
     created: bool
 
 
+class FileLine(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    file_name: str
+    status: str
+    expected_records: int
+    received_records: int | None
+
+
+class RunReport(BaseModel):
+    """The day's figures, by code (E11-02)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    business_date: str
+    data_type: str
+    files_expected: int = Field(ge=0)
+    files_received: int = Field(ge=0)
+    files: tuple[FileLine, ...]
+    dataset_complete: bool
+    flags_read: int = Field(ge=0)
+    """MDX's flags for the date."""
+    flags_normalized: int = Field(ge=0)
+    flags_not_normalized: int = Field(ge=0)
+    flags_assessed: int = Field(ge=0)
+    """Flags that went through the crucial steps."""
+    flags_investigated: int = Field(ge=0)
+    """Flags for which the student called at least one tool."""
+    labels: dict[str, int]
+    """Code's classification (E8-01): threshold artifacts, large moves, ordinary, ..."""
+    threshold_artifacts: int = Field(ge=0)
+    large_moves: int = Field(ge=0)
+    verdicts: dict[Verdict, int]
+    """Final verdicts, after the teacher."""
+    review_first: tuple[str, ...]
+    """Items with a likely real verdict, in list order."""
+    tools_called: int = Field(ge=0)
+    tools_by_name: dict[str, int]
+    tool_errors: int = Field(ge=0)
+    send_backs: int = Field(ge=0)
+    """Flags the teacher sent back."""
+    send_back_rounds: int = Field(ge=0)
+    teacher_decisions: dict[ItemDecisionKind, int]
+    """The latest decision on each flag."""
+    templates: dict[str, int]
+    """Explanations and reports written by code instead of the LLM."""
+    cases_created: int = Field(ge=0)
+    cases_existing: int = Field(ge=0)
+
+
 class RecordCasesResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -112,6 +173,7 @@ class RecordCasesResult(BaseModel):
     """Already recorded for this session, e.g. when a step is resumed."""
     verdicts: dict[Verdict, int]
     not_validated: int = Field(ge=0)
+    report: RunReport
 
 
 def _latest_assessment(ctx: TaskContext) -> MarketAssessmentResult:
@@ -201,10 +263,75 @@ async def record_cases(ctx: TaskContext) -> RecordCasesResult:
             )
         )
     verdicts = Counter(line.verdict for line in lines)
+    created = sum(1 for line in lines if line.created)
     return RecordCasesResult(
         cases=tuple(lines),
-        cases_created=sum(1 for line in lines if line.created),
-        cases_existing=sum(1 for line in lines if not line.created),
+        cases_created=created,
+        cases_existing=len(lines) - created,
         verdicts={v: verdicts.get(v, 0) for v in Verdict},
         not_validated=sum(1 for r in reports if not r.validated),
+        report=run_report(ctx, reports, created, len(lines) - created),
+    )
+
+
+def run_report(
+    ctx: TaskContext, reports: list[CaseReport], created: int, existing: int
+) -> RunReport:
+    state = ctx.state
+    raw = ctx.result_of(CHECK_FILES_AND_INTAKE)
+    if raw is None:
+        raise ValueError("the run report needs a completed intake step")
+    intake = IntakeResult.model_validate(raw)
+    assessed = _latest_assessment(ctx)
+    calls = [c for r in reports for c in r.trail.tool_calls]
+    latest = {r.flag_id: r.teacher_decision for r in reports if r.teacher_decision is not None}
+    sent_back = {
+        d.item_id
+        for v in state.validations
+        for d in v.decisions
+        if d.kind is ItemDecisionKind.SEND_BACK
+    }
+    labels = Counter(i.assessment.classification.value for i in assessed.items)
+    verdicts = Counter(r.verdict for r in reports)
+    decisions = Counter(latest.values())
+    files = intake.completeness
+    return RunReport(
+        business_date=ctx.inputs.business_date.isoformat(),
+        data_type=ctx.inputs.data_type,
+        files_expected=files.files_expected,
+        files_received=files.files_received,
+        files=tuple(
+            FileLine(
+                file_name=f.file_name,
+                status=f.status.value,
+                expected_records=f.expected_records,
+                received_records=f.received_records,
+            )
+            for f in files.files
+        ),
+        dataset_complete=intake.dataset_complete,
+        flags_read=intake.flags_read or 0,
+        flags_normalized=len(intake.normalized_flags),
+        flags_not_normalized=len(intake.flag_issues),
+        flags_assessed=len(assessed.items),
+        flags_investigated=sum(1 for r in reports if r.trail.tool_calls),
+        labels={c.value: labels.get(c.value, 0) for c in Classification},
+        threshold_artifacts=labels.get(Classification.THRESHOLD_ARTIFACT.value, 0),
+        large_moves=labels.get(Classification.GENUINE_LARGE_MOVE.value, 0),
+        verdicts={v: verdicts.get(v, 0) for v in Verdict},
+        review_first=tuple(r.item for r in reports if r.verdict is Verdict.LIKELY_REAL),
+        tools_called=len(calls),
+        tools_by_name=dict(sorted(Counter(c.tool for c in calls).items())),
+        tool_errors=sum(1 for c in calls if c.error),
+        send_backs=len(sent_back),
+        send_back_rounds=sum(1 for e in state.execution if e.task == REVISE_DRAFTS),
+        teacher_decisions={k: decisions.get(k, 0) for k in ItemDecisionKind},
+        templates={
+            "explanations": sum(
+                1 for i in assessed.items if i.explanation.source is ExplanationSource.TEMPLATE
+            ),
+            "reports": sum(1 for r in reports if r.report.source is ExplanationSource.TEMPLATE),
+        },
+        cases_created=created,
+        cases_existing=existing,
     )
