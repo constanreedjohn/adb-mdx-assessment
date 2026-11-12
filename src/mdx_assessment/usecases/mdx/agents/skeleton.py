@@ -39,6 +39,10 @@ from mdx_assessment.usecases.mdx.agents.input_validation import (
     IntakeResult,
     check_files_and_intake,
 )
+from mdx_assessment.usecases.mdx.agents.investigate import PROMPT_ID as INVESTIGATE_PROMPT_ID
+from mdx_assessment.usecases.mdx.agents.investigate import (
+    PROMPT_VERSION as INVESTIGATE_PROMPT_VERSION,
+)
 from mdx_assessment.usecases.mdx.agents.market_data import (
     MarketAssessmentResult,
     near_zero_check,
@@ -110,11 +114,17 @@ TASKS = (
         agent=MARKET_DATA_ASSESSMENT,
         description="Assess each flag for a near-zero threshold artifact: absolute change, "
         "relative change only above the near-zero floor, z-score against 60-day history; "
-        "label each item, list them in review order and explain each in plain words.",
+        "label each item, list them in review order and explain each in plain words; "
+        "then investigate where unsure and draft a verdict per flag.",
         output_model=MarketAssessmentResult,
         handler=near_zero_check,
-        budget=TaskBudget(max_calls=60, max_seconds=120),  # one history call per flag
-        prompts=((EXPLAIN_PROMPT_ID, EXPLAIN_PROMPT_VERSION),),
+        # One history call per flag, a few for the investigation tools; time for the
+        # explanation call and up to six student rounds.
+        budget=TaskBudget(max_calls=60, max_seconds=300),
+        prompts=(
+            (EXPLAIN_PROMPT_ID, EXPLAIN_PROMPT_VERSION),
+            (INVESTIGATE_PROMPT_ID, INVESTIGATE_PROMPT_VERSION),
+        ),
         review_checks=(FLAG_RECONCILIATION,),
         depends_on=(CHECK_FILES_AND_INTAKE,),
     ),

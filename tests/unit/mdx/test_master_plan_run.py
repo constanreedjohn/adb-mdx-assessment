@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
-from tests.support import explain_from_inputs
+from tests.support import explain_from_inputs, investigate_from_inputs
 
 from mdx_assessment.app import build_registries, load_config
 from mdx_assessment.core.config import LoadedConfig, load_prompt
@@ -104,7 +104,13 @@ def valid_reply(tasks: tuple[str, ...]) -> Callable[[Any], dict[str, Any]]:
 async def test_the_master_plans_the_simulated_day(config: LoadedConfig, data_dir: Path) -> None:
     tasks = mandatory(config)
     audit = InMemoryAuditTrail()
-    fake = FakeProvider({"master_plan": valid_reply(tasks), "mda_explain": explain_from_inputs})
+    fake = FakeProvider(
+        {
+            "master_plan": valid_reply(tasks),
+            "mda_explain": explain_from_inputs,
+            "mda_investigate": investigate_from_inputs,
+        }
+    )
     final = await run_session(config, data_dir, audit, fake)
 
     assert final.plan is not None and final.plan.source is PlanSource.MASTER
@@ -129,7 +135,11 @@ async def test_a_rejected_plan_still_runs_the_day_on_the_default(
     config: LoadedConfig, data_dir: Path
 ) -> None:
     fake = FakeProvider(
-        {"master_plan": valid_reply(mandatory(config)[:2]), "mda_explain": explain_from_inputs}
+        {
+            "master_plan": valid_reply(mandatory(config)[:2]),
+            "mda_explain": explain_from_inputs,
+            "mda_investigate": investigate_from_inputs,
+        }
     )
     final = await run_session(config, data_dir, InMemoryAuditTrail(), fake)
     assert final.plan is not None and final.plan.source is PlanSource.DEFAULT

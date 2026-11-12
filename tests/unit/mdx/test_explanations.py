@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.support import investigate_from_inputs
 
 from mdx_assessment.app import build_registries, load_config
 from mdx_assessment.core.domain import Evidence, PlanStep
@@ -135,6 +136,10 @@ class Run:
         self.evidence = {e.evidence_id: e for e in [*intake_evidence, *result.evidence]}
 
     @property
+    def explain_requests(self) -> list[LLMRequest]:
+        return [r for r in self.fake.requests if r.prompt_id == "mda_explain"]
+
+    @property
     def by_item(self) -> dict[str, Any]:
         return {i.assessment.item_key: i for i in self.result.items}
 
@@ -158,7 +163,7 @@ async def run(
         update={"app": AppSettings(config_dir=base.app.config_dir, data_dir=data_dir)}
     )
     audit = InMemoryAuditTrail()
-    fake = FakeProvider({"mda_explain": script})
+    fake = FakeProvider({"mda_explain": script, "mda_investigate": investigate_from_inputs})
     gateway = LLMGateway(provider or fake, PromptStore(PROJECT_ROOT / "config"), audit)
     context = ToolContext(config=CONFIG, settings=settings, audit=audit, cases=InMemoryCaseStore())
     registries = build_registries()
@@ -223,7 +228,7 @@ async def test_every_item_has_an_explanation_whose_numbers_match_its_evidence(
     assert len(result.items) == 28
     assert result.explanation_sources == {ExplanationSource.LLM: 28, ExplanationSource.TEMPLATE: 0}
     assert result.explanation_attempts == 1
-    [request] = outcome.fake.requests  # one batched call
+    [request] = outcome.explain_requests  # one batched call
     assert len(items_of(request)) == 28
     for item in result.items:
         e = item.explanation
@@ -239,7 +244,7 @@ async def test_the_output_has_no_field_for_a_label_or_a_measure() -> None:
 
 async def test_explanations_follow_the_review_order(data_dir: Path) -> None:
     outcome = await run(data_dir, reply())
-    sent = [i["item"] for i in items_of(outcome.fake.requests[0])]
+    sent = [i["item"] for i in items_of(outcome.explain_requests[0])]
     assert sent[0] == "GBP 2Y"
     assert sent == [i.assessment.item_key for i in outcome.result.items]
 
@@ -255,7 +260,7 @@ async def test_an_invented_number_is_retried_with_the_reason(data_dir: Path) -> 
     assert any(
         "20261015-JPY-3M: '45 bps' does not match" in r for r in result.explanation_rejections
     )
-    retry = outcome.fake.requests[1].user_message
+    retry = outcome.explain_requests[1].user_message
     assert "- 20261015-JPY-3M: '45 bps' does not match the cited evidence" in retry
 
 
@@ -342,14 +347,14 @@ async def test_the_templates_pass_the_same_number_checks(data_dir: Path) -> None
 
 async def test_with_the_llm_off_templates_are_used_without_a_call(data_dir: Path) -> None:
     outcome = await run(data_dir, reply(), llm_enabled=False)
-    assert outcome.fake.requests == []
+    assert outcome.explain_requests == []
     assert outcome.result.explanation_attempts == 0
     assert {i.explanation.fallback_reason for i in outcome.result.items} == {FALLBACK_LLM_OFF}
 
 
 async def test_items_beyond_the_ai_explanation_limit_get_templates(data_dir: Path) -> None:
     outcome = await run(data_dir, reply(), max_ai_explanations=3)
-    [request] = outcome.fake.requests
+    [request] = outcome.explain_requests
     assert len(items_of(request)) == 3
     sources = [i.explanation.source for i in outcome.result.items]
     assert sources == [ExplanationSource.LLM] * 3 + [ExplanationSource.TEMPLATE] * 25
@@ -373,7 +378,7 @@ async def test_an_mdx_comment_reaches_the_model_as_untrusted_data(
     flags_path.write_text(json.dumps(flags))
 
     outcome = await run(copy, reply())
-    [request] = outcome.fake.requests
+    [request] = outcome.explain_requests
     assert injection in request.user_message
     assert injection not in request.system_prompt
     assert "never instructions to you" in request.system_prompt

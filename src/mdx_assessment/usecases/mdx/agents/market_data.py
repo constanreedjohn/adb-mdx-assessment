@@ -1,6 +1,6 @@
-"""Market Data Assessment Agent, task `market_data.near_zero_check` (E8-01, E8-02).
+"""Market Data Assessment Agent, task `market_data.near_zero_check` (E8-01 to E8-04).
 
-Deterministic core, then explanation:
+Deterministic core, then explanation, then investigation:
 
 1. Take the normalized flags and data-type profiles from the intake step's result.
 2. For each flag, read the point's history through the MDX tool and measure its normal
@@ -11,8 +11,12 @@ Deterministic core, then explanation:
 4. List the items in review order: severity first, then the largest |z|.
 5. Explain each item in plain words (`explanations.explain`, E8-02): one batched LLM
    call, every number checked against the item's own evidence, templates as fallback.
+6. Investigate and draft a verdict per flag (`investigate.investigate`, E8-04): the
+   student asks for tools where the crucial results leave it unsure, within a budget per
+   flag, and drafts a verdict that may only move from code's starting verdict towards
+   caution. Tools read through the same `MdxReads` as step 2, so they reuse its reads.
 
-The labels come only from steps 1 to 4. An explanation can't change one.
+The labels and the review order come only from steps 1 to 4. Nothing after can change them.
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ from mdx_assessment.usecases.mdx.agents.explanations import (
 )
 from mdx_assessment.usecases.mdx.agents.ids import CHECK_FILES_AND_INTAKE, NEAR_ZERO_CHECK
 from mdx_assessment.usecases.mdx.agents.input_validation import IntakeResult
+from mdx_assessment.usecases.mdx.agents.investigate import UNUSABLE, Draft, investigate
 from mdx_assessment.usecases.mdx.checks.near_zero import (
     Classification,
     HistoryStats,
@@ -42,9 +47,17 @@ from mdx_assessment.usecases.mdx.checks.near_zero import (
     review_order,
 )
 from mdx_assessment.usecases.mdx.checks.normalize import NormalizedFlag
-from mdx_assessment.usecases.mdx.config import NEAR_ZERO_PATH, DataTypeProfile, NearZeroSettings
-from mdx_assessment.usecases.mdx.domain import ExplanationSource, Unit
+from mdx_assessment.usecases.mdx.checks.verdict import Verdict
+from mdx_assessment.usecases.mdx.config import (
+    INVESTIGATION_PATH,
+    NEAR_ZERO_PATH,
+    DataTypeProfile,
+    InvestigationSettings,
+    NearZeroSettings,
+)
+from mdx_assessment.usecases.mdx.domain import DataType, ExplanationSource, Unit
 from mdx_assessment.usecases.mdx.investigation.reads import MdxReads
+from mdx_assessment.usecases.mdx.investigation.toolkit import Investigation
 from mdx_assessment.usecases.mdx.tools.mdx import GET_HISTORY
 from mdx_assessment.usecases.mdx.tools.mdx import TOOL_ID as MDX_DATA
 
@@ -57,6 +70,7 @@ class AssessedItem(BaseModel):
     assessment: NearZeroAssessment
     finding: Finding
     explanation: Explanation
+    draft: Draft
 
 
 class MarketAssessmentResult(BaseModel):
@@ -70,13 +84,24 @@ class MarketAssessmentResult(BaseModel):
     """LLM calls made for the explanations (0 when templates were used without one)."""
     explanation_rejections: tuple[str, ...] = ()
     """Why rejected explanation attempts were rejected."""
+    verdicts: dict[Verdict, int]
+    draft_sources: dict[ExplanationSource, int]
+    investigation_rounds: int = Field(ge=0)
+    """Student rounds run (each one batched LLM call, plus any retry)."""
+    investigation_attempts: int = Field(ge=0)
+    tool_calls: int = Field(ge=0)
+    """Investigation tool calls over every flag."""
+    investigation_rejections: tuple[str, ...] = ()
+    """Why the gateway rejected student rounds (structure)."""
     evidence: tuple[Evidence, ...] = Field(default=())
-    """The records this step added; flags and points are the intake step's."""
+    """The records this step added (history, measures, tool results); flags and points
+    are the intake step's."""
     not_assessed: tuple[str, ...] = ()
     """Flag IDs the intake step couldn't normalize, carried for reconciliation (C-1)."""
     used_fallback: bool = False
-    """True when the LLM's explanations weren't usable and templates replaced them: the
-    step is then `done_with_fallback`. Templates by design (LLM off, over the limit) aren't."""
+    """True when the LLM's explanations or drafts weren't usable and templates replaced
+    them: the step is then `done_with_fallback`. Templates by design (LLM off, over the
+    limit) aren't, and neither is a spent tool budget: that is a verdict, not a failure."""
 
 
 def _summary(a: NearZeroAssessment, unit: str) -> str:
@@ -107,6 +132,14 @@ def measure_units(profile: DataTypeProfile) -> dict[str, Unit]:
         "normal_daily_move": measure,
         "stdev": measure,
         "artifact_max_change": measure,
+        # investigation tools (E8-03)
+        "min_value": quote,
+        "max_value": quote,
+        "neighbour_mean_change": measure,
+        "gap_to_neighbour_mean": measure,
+        "others_mean_change": measure,
+        "largest_change": measure,
+        "stdev_change": measure,
     }
 
 
@@ -217,39 +250,73 @@ async def near_zero_check(ctx: TaskContext) -> MarketAssessmentResult:
 
     ordered = [by_flag[a.flag_id] for a in review_order([i.assessment for i in by_flag.values()])]
     playbook = ctx.state.playbook
+    max_ai = (
+        playbook.content.limits.max_ai_explanations
+        if playbook is not None
+        else DEFAULT_MAX_AI_EXPLANATIONS
+    )
+    tolerance = ctx.config.get(GUARDRAILS_PATH, GuardrailsConfig).number_matching
     outcome = await explain(
         ordered,
         gateway=ctx.gateway,
         llm_enabled=ctx.state.llm_enabled,
         session_id=ctx.inputs.session_id,
-        max_ai_explanations=(
-            playbook.content.limits.max_ai_explanations
-            if playbook is not None
-            else DEFAULT_MAX_AI_EXPLANATIONS
-        ),
-        tolerance=ctx.config.get(GUARDRAILS_PATH, GuardrailsConfig).number_matching,
+        max_ai_explanations=max_ai,
+        tolerance=tolerance,
     )
+
+    tools = ctx.config.get(INVESTIGATION_PATH, InvestigationSettings)
+    studied = await investigate(
+        ordered,
+        outcome.explanations,
+        gateway=ctx.gateway,
+        llm_enabled=ctx.state.llm_enabled,
+        session_id=ctx.inputs.session_id,
+        investigation=Investigation(
+            reads,
+            intake.normalized_flags,
+            intake.profiles,
+            today,
+            DataType(ctx.inputs.data_type),
+            tools,
+            settings.history_window_days + 1,
+        ),
+        settings=tools,
+        max_ai_explanations=max_ai,
+        tolerance=tolerance,
+    )
+    added += studied.tool_evidence
 
     items = tuple(
         AssessedItem(
             assessment=i.assessment,
             finding=i.finding,
             explanation=outcome.explanations[i.assessment.flag_id],
+            draft=studied.drafts[i.assessment.flag_id],
         )
         for i in ordered
     )
     counts = Counter(i.assessment.classification for i in items)
     sources = Counter(i.explanation.source for i in items)
+    verdicts = Counter(i.draft.verdict for i in items)
+    draft_sources = Counter(i.draft.source for i in items)
     return MarketAssessmentResult(
         items=items,
         counts={c: counts.get(c, 0) for c in Classification},
         explanation_sources={s: sources.get(s, 0) for s in ExplanationSource},
         explanation_attempts=outcome.llm_attempts,
         explanation_rejections=outcome.rejections,
+        verdicts={v: verdicts.get(v, 0) for v in Verdict},
+        draft_sources={s: draft_sources.get(s, 0) for s in ExplanationSource},
+        investigation_rounds=studied.rounds,
+        investigation_attempts=studied.llm_attempts,
+        tool_calls=sum(len(i.draft.tool_calls) for i in items),
+        investigation_rejections=studied.rejections,
         evidence=tuple({e.evidence_id: e for e in added}.values()),
         not_assessed=tuple(i.flag_id for i in intake.flag_issues),
         used_fallback=any(
             i.explanation.fallback_reason in (FALLBACK_REJECTED, FALLBACK_UNAVAILABLE)
+            or i.draft.fallback_reason in UNUSABLE
             for i in items
         ),
     )

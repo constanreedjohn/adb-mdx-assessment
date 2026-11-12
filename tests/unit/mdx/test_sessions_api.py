@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.memory import InMemorySaver
-from tests.support import CapturedTraces, explain_from_inputs
+from tests.support import CapturedTraces, explain_from_inputs, investigate_from_inputs
 
 from mdx_assessment.app import build_registries, load_config
 from mdx_assessment.core.api import create_app
@@ -82,7 +82,13 @@ def client_for(
     def make_gateway(trail: AuditTrail, active: Tracer) -> LLMGateway:
         if isinstance(script, Exception):
             raise script
-        fake = FakeProvider({"master_plan": script, "mda_explain": explain_from_inputs})
+        fake = FakeProvider(
+            {
+                "master_plan": script,
+                "mda_explain": explain_from_inputs,
+                "mda_investigate": investigate_from_inputs,
+            }
+        )
         return create_llm_gateway(trail, active, settings, fake)
 
     service = SessionService(
@@ -127,7 +133,12 @@ def test_post_then_get_on_the_simulated_day(client: TestClient, config: LoadedCo
     assert session["agent_results"]["s0"]["flags_read"] == 28
     assert session["versions"] == {
         "config": config.version,
-        "prompts": {"master_plan": "v1", "master_review": "v1", "mda_explain": "v1"},
+        "prompts": {
+            "master_plan": "v1",
+            "master_review": "v1",
+            "mda_explain": "v1",
+            "mda_investigate": "v1",
+        },
         "llm_deployment": "fake",
         "ml_model": None,
     }
@@ -161,7 +172,13 @@ def test_an_unavailable_model_still_completes_on_the_default_plan(
 
 class ClosingProvider(FakeProvider):
     def __init__(self, script: Any) -> None:
-        super().__init__({"master_plan": script, "mda_explain": explain_from_inputs})
+        super().__init__(
+            {
+                "master_plan": script,
+                "mda_explain": explain_from_inputs,
+                "mda_investigate": investigate_from_inputs,
+            }
+        )
         self.closed = False
 
     async def aclose(self) -> None:

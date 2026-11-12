@@ -35,3 +35,27 @@ def explain_from_inputs(request: LLMRequest) -> dict[str, Any]:
             }
         )
     return {"explanations": out}
+
+
+def investigation_flags(request: LLMRequest) -> list[dict[str, Any]]:
+    """The flags an `mda_investigate` round asks about, read back from its inputs."""
+    text = request.user_message.removeprefix("Inputs (JSON):\n").split("\n\n")[0]
+    flags: list[dict[str, Any]] = json.loads(text)["flags"]
+    return flags
+
+
+def conclude(flag: dict[str, Any], verdict: str | None = None) -> dict[str, Any]:
+    """A grounded conclusion: the explanation as the report, at the starting verdict."""
+    return {
+        "flag_id": flag["flag_id"],
+        "action": "conclude",
+        "tool_calls": [],
+        "verdict": verdict or flag["starting_verdict"],
+        "report": flag["explanation"]["text"],
+        "evidence_ids": flag["explanation"]["evidence_ids"],
+    }
+
+
+def investigate_from_inputs(request: LLMRequest) -> dict[str, Any]:
+    """A fake `mda_investigate` reply that concludes every flag at once: always valid."""
+    return {"steps": [conclude(f) for f in investigation_flags(request)]}

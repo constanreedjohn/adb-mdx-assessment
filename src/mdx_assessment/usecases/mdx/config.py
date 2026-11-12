@@ -187,5 +187,7 @@ class InvestigationSettings(DomainModel):
     neighbours_each_side: int = Field(ge=1, le=5)
     flag_frequency_window_days: int = Field(ge=2, le=250)
     point_history_max_days: int = Field(ge=2, le=250)
+    max_tool_calls_per_flag: int = Field(ge=0, le=20)
+    """The student's tool budget per flag, the send-back round included (E8-04, E6-05)."""
     provisional: bool = False
     note: str = ""

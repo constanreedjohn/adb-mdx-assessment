@@ -15,6 +15,7 @@ mdx_rule:
 neighbours_each_side: 1        # neighbour_moves: adjacent tenors on each side of the flagged one
 flag_frequency_window_days: 60 # business days before today that flag_frequency looks back over
 point_history_max_days: 60     # the longest window point_history may be asked for, today included
+max_tool_calls_per_flag: 4     # the student's tool budget per flag, send-back round (E6-05) included
 
 provisional: true
 note: >-
