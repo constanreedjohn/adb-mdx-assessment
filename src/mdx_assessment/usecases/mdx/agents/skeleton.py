@@ -12,17 +12,13 @@ E11-01/02); the task IDs, agents and graph stay the same.
 
 from __future__ import annotations
 
-from typing import Literal
-
-from pydantic import BaseModel, ConfigDict, Field
-
 from mdx_assessment.core.orchestration.tasks import (
     AgentDefinition,
-    TaskContext,
     TaskDefinition,
 )
 from mdx_assessment.core.platform import PlatformRegistries
 from mdx_assessment.core.tools.client import TaskBudget
+from mdx_assessment.usecases.mdx.agents.escalation import RecordCasesResult, record_cases
 from mdx_assessment.usecases.mdx.agents.explanations import PROMPT_ID as EXPLAIN_PROMPT_ID
 from mdx_assessment.usecases.mdx.agents.explanations import (
     PROMPT_VERSION as EXPLAIN_PROMPT_VERSION,
@@ -91,19 +87,6 @@ AGENTS = (
 )
 
 
-class _Stub(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    stub: Literal[True] = True
-
-
-class CasesStubResult(_Stub):
-    cases_created: int = Field(ge=0)
-
-
-async def record_cases(ctx: TaskContext) -> CasesStubResult:
-    return CasesStubResult(cases_created=0)
-
-
 TASKS = (
     TaskDefinition(
         id=CHECK_FILES_AND_INTAKE,
@@ -155,10 +138,11 @@ TASKS = (
     TaskDefinition(
         id=RECORD_CASES,
         agent=ESCALATION_REPORTING,
-        description="Record one case per assessed item and produce the run report. "
-        "(Skeleton stub: creates no cases.)",
-        output_model=CasesStubResult,
+        description="Record one open case per flag, in list order (verdict, then severity), "
+        "each with its verdict, report, investigation trail and evidence.",
+        output_model=RecordCasesResult,
         handler=record_cases,
+        budget=TaskBudget(max_calls=60, max_seconds=60),  # one create_case per flag
         depends_on=(NEAR_ZERO_CHECK,),
     ),
 )

@@ -117,6 +117,7 @@ class Outcome:
     final: RunState
     audit: InMemoryAuditTrail
     fake: FakeProvider
+    cases: InMemoryCaseStore
 
     def requests(self, prompt_id: str) -> list[LLMRequest]:
         return [r for r in self.fake.requests if r.prompt_id == prompt_id]
@@ -146,11 +147,12 @@ async def session(
     if teach is not None:
         script["master_validate"] = teach
     fake = FakeProvider(script)
+    cases = InMemoryCaseStore()
     gateway = LLMGateway(fake, PromptStore(PROJECT_ROOT / "config"), audit)
     hub = ToolHub(
         registries.tools,
         CONFIG.get(PERMISSIONS_PATH, PermissionMatrix),
-        ToolContext(config=CONFIG, settings=settings, audit=audit, cases=InMemoryCaseStore()),
+        ToolContext(config=CONFIG, settings=settings, audit=audit, cases=cases),
     )
 
     async def default_plan(state: RunState) -> Plan:
@@ -175,7 +177,7 @@ async def session(
             session_id="sess-t", business_date=DAY, data_type="linear", llm_enabled=llm_enabled
         )
         final = RunState.model_validate(await app.ainvoke(initial, thread_config("sess-t")))
-    return Outcome(final, audit, fake)
+    return Outcome(final, audit, fake, cases)
 
 
 # --- acceptance -----------------------------------------------------------------------------------

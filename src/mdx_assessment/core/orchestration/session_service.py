@@ -42,6 +42,7 @@ from mdx_assessment.core.orchestration.run_context import context_hook, playbook
 from mdx_assessment.core.orchestration.state import RunState
 from mdx_assessment.core.persistence.audit import AuditTrail
 from mdx_assessment.core.persistence.case_store import CaseStore
+from mdx_assessment.core.persistence.repositories import CaseRecord
 from mdx_assessment.core.persistence.session_store import SessionStore
 from mdx_assessment.core.platform import PlatformRegistries
 from mdx_assessment.core.tools.client import ToolHub
@@ -157,6 +158,12 @@ class SessionService:
 
     def get(self, session_id: str) -> SessionResult | None:
         return self._store.get(session_id)
+
+    def list_cases(self, session_id: str) -> list[CaseRecord] | None:
+        """A session's cases, in the order they were recorded; None if no such session."""
+        if self._store.get(session_id) is None:
+            return None
+        return self._cases.list_for_session(session_id)
 
     async def _run(self, initial: RunState, tracer: Tracer) -> RunState:
         registries = self._registries

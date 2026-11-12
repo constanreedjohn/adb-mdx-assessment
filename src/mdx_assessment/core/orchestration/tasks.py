@@ -61,9 +61,10 @@ class TaskContext:
         return self.tools_client
 
     def result_of(self, task_id: str) -> dict[str, JsonValue] | None:
-        """The latest successful result of an earlier step that ran `task_id`."""
+        """The latest result of an earlier step that ran `task_id`: done, or done with a
+        template fallback (still a usable result)."""
         for entry in reversed(self.state.execution):
-            if entry.task == task_id and entry.status.value == "done":
+            if entry.task == task_id and entry.status.value in ("done", "done_with_fallback"):
                 return self.state.agent_results.get(entry.step_id)
         return None
 

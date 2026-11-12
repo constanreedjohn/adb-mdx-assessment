@@ -124,6 +124,7 @@ async def test_input_validation_reads_real_mdx_data(
         ("input_validation", "get_flags", "ok"),
         ("input_validation", "get_curve_values", "ok"),
         *[("market_data_assessment", "get_history", "ok")] * 28,
+        *[("escalation_reporting", "create_case", "ok")] * 28,  # E11-01: one case per flag
     ]
     assert all(e.session_id == "sess-sk" for e in audit.read())
     assert audit.verify().valid
