@@ -1,0 +1,22 @@
+# Investigation tools of the Market Data Assessment Agent (owner: MDX pack; E8-03).
+# The student chooses these tools per flag (E8-04); code runs them and computes every
+# number. Changing a value is a reviewed, versioned change, recorded with every run
+# through the config version.
+
+version: "1"
+
+# MDX's own exception rule, as the solution understands it. `flag_frequency` re-applies
+# it to a point's history only when MDX has no past flags to give (the simulated day
+# has none). It never re-detects today's flags: those come from MDX.
+mdx_rule:
+  name: relative_change
+  relative_change_pct: 2.0     # flagged when |relative change| is above this, in percent
+
+neighbours_each_side: 1        # neighbour_moves: adjacent tenors on each side of the flagged one
+flag_frequency_window_days: 60 # business days before today that flag_frequency looks back over
+point_history_max_days: 60     # the longest window point_history may be asked for, today included
+
+provisional: true
+note: >-
+  The MDX rule mirrors the simulated MDX (config/sim/linear_day.yaml) until ADB confirms
+  the rule and its threshold per data type. Window lengths are the team's proposal.

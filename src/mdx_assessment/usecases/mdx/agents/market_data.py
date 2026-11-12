@@ -43,7 +43,8 @@ from mdx_assessment.usecases.mdx.checks.near_zero import (
 )
 from mdx_assessment.usecases.mdx.checks.normalize import NormalizedFlag
 from mdx_assessment.usecases.mdx.config import NEAR_ZERO_PATH, DataTypeProfile, NearZeroSettings
-from mdx_assessment.usecases.mdx.domain import ExplanationSource, Series, Unit
+from mdx_assessment.usecases.mdx.domain import ExplanationSource, Unit
+from mdx_assessment.usecases.mdx.investigation.reads import MdxReads
 from mdx_assessment.usecases.mdx.tools.mdx import GET_HISTORY
 from mdx_assessment.usecases.mdx.tools.mdx import TOOL_ID as MDX_DATA
 
@@ -188,22 +189,16 @@ async def near_zero_check(ctx: TaskContext) -> MarketAssessmentResult:
     settings = ctx.config.get(NEAR_ZERO_PATH, NearZeroSettings)
     today = ctx.inputs.business_date
     intake_evidence = {e.evidence_id: e for e in intake.evidence}
+    reads = MdxReads(ctx.tools)
 
     by_flag: dict[str, ItemToExplain] = {}
     added: list[Evidence] = []
     for flag in intake.normalized_flags:
         profile = intake.profiles[flag.kind]
-        series = Series.model_validate(
-            await ctx.tools.call(
-                MDX_DATA,
-                GET_HISTORY,
-                {
-                    "curve_id": flag.curve_id,
-                    "tenor": str(flag.tenor),
-                    "end_date": today.isoformat(),
-                    "days": settings.history_window_days + 1,  # the window, plus today
-                },
-            )
+        # The window, plus today. Read through `reads` so the investigation tools (E8-04)
+        # reuse it instead of reading the point again.
+        series = await reads.history(
+            flag.curve_id, flag.tenor, today, settings.history_window_days + 1
         )
         stats = history_stats(series.observations, today, profile, settings)
         assessment = assess_near_zero(flag, stats, profile, settings)

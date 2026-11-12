@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, time
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
@@ -21,6 +21,7 @@ DATA_TYPES_PATH = "profiles/data_types.yaml"
 EXPECTED_FILES_PATH = "expected_files.yaml"
 RUN_CONTEXT_PATH = "run_context.yaml"
 NEAR_ZERO_PATH = "near_zero.yaml"
+INVESTIGATION_PATH = "investigation.yaml"
 
 Identifier = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$")]
 
@@ -165,3 +166,26 @@ class NearZeroSettings(DomainModel):
                 "window holds"
             )
         return self
+
+
+# --- investigation.yaml ----------------------------------------------------------
+
+
+class MdxRuleSettings(DomainModel):
+    """MDX's exception rule, re-applied by `flag_frequency` when MDX has no past flags."""
+
+    name: Literal["relative_change"]
+    relative_change_pct: float = Field(gt=0)
+    """Flagged when |relative change| is above this, in percent."""
+
+
+class InvestigationSettings(DomainModel):
+    """Settings of the investigation tools (E8-03)."""
+
+    version: str = Field(min_length=1)
+    mdx_rule: MdxRuleSettings
+    neighbours_each_side: int = Field(ge=1, le=5)
+    flag_frequency_window_days: int = Field(ge=2, le=250)
+    point_history_max_days: int = Field(ge=2, le=250)
+    provisional: bool = False
+    note: str = ""

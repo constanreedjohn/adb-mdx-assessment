@@ -22,10 +22,12 @@ from mdx_assessment.usecases.mdx.agents.skeleton import register_skeleton
 from mdx_assessment.usecases.mdx.config import (
     DATA_TYPES_PATH,
     EXPECTED_FILES_PATH,
+    INVESTIGATION_PATH,
     NEAR_ZERO_PATH,
     RUN_CONTEXT_PATH,
     DataTypeProfiles,
     ExpectedFiles,
+    InvestigationSettings,
     NearZeroSettings,
     RunContextSettings,
 )
@@ -57,5 +59,6 @@ def register(registries: PlatformRegistries) -> None:
     registries.tools.register(MDX_TOOL_SPEC, _mdx_server)
     registries.config.register(RUN_CONTEXT_PATH, RunContextSettings, owner=USE_CASE_ID)
     registries.config.register(NEAR_ZERO_PATH, NearZeroSettings, owner=USE_CASE_ID)
+    registries.config.register(INVESTIGATION_PATH, InvestigationSettings, owner=USE_CASE_ID)
     registries.facts = build_mdx_facts
     register_skeleton(registries)
