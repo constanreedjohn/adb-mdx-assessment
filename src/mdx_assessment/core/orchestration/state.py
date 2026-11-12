@@ -24,6 +24,7 @@ from mdx_assessment.core.domain import (
     Decision,
     DomainModel,
     Plan,
+    PlanStep,
     ReviewCheckResult,
     RunContext,
     RunReview,
@@ -78,6 +79,9 @@ class RunState(BaseModel):
     plan: Plan | None = None
     next_step: int = Field(default=0, ge=0)
     """Index of the next plan step the dispatcher will run (E6-02)."""
+    queued_step: PlanStep | None = None
+    """A follow-up a review point decided (a send-back, E6-05). It runs before the next
+    plan step, then gets its own review point."""
     execution: Annotated[list[ExecutionEntry], operator.add] = Field(default_factory=list)
     agent_results: Annotated[dict[str, dict[str, JsonValue]], merge_results] = Field(
         default_factory=dict

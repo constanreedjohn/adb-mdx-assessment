@@ -7,8 +7,11 @@ data, and returns a plan. Code then validates it:
 - **P-2 Allowed actions:** nothing in `steps` beyond the mandatory tasks, and only
   follow-ups the playbook allows.
 - **P-3 Limits:** follow-ups within the round limit (one per round), and the steps'
-  combined time budgets within the run limit. The AI-explanation limit can't be judged
-  from a plan: it applies when explanations are generated.
+  combined time budgets within the run limit, keeping room for the send-backs the
+  playbook allows (`max_send_backs` times the longest allowed follow-up). The send-backs
+  themselves are decided at review points, and checked against P-2 and P-3 there
+  (`graph.send_back_refusal`). The AI-explanation limit can't be judged from a plan: it
+  applies when explanations are generated.
 - **P-4 Evidence:** at least one citation; every cited ID, or ID named in a rationale,
   exists; and every number a rationale states is in the inputs, unit-aware and within
   the tolerance in `config/guardrails.yaml` (E5-03, `gateway.grounding`).
@@ -182,12 +185,24 @@ def _limits(output: MasterPlanOutput, playbook: ResolvedPlaybook, tasks: TaskReg
         )
     definitions = [tasks.get(s.task) for s in (*output.steps, *output.follow_ups)]
     budgeted = sum(d.budget.max_seconds for d in definitions if d is not None)
-    if budgeted > limits.max_run_seconds:
+    reserve = limits.max_send_backs * send_back_seconds(playbook, tasks)
+    if budgeted + reserve > limits.max_run_seconds:
+        room = f" plus {reserve:g}s kept for send-backs" if reserve else ""
         errors.append(
-            f"the steps' time budgets total {budgeted:g}s, over the run limit of "
+            f"the steps' time budgets total {budgeted:g}s{room}, over the run limit of "
             f"{limits.max_run_seconds}s"
         )
     return errors
+
+
+def send_back_seconds(playbook: ResolvedPlaybook, tasks: TaskRegistry) -> float:
+    """The longest time budget among the follow-ups the playbook allows."""
+    budgets = [
+        d.budget.max_seconds
+        for t in playbook.content.allowed_follow_ups
+        if (d := tasks.get(t)) is not None
+    ]
+    return max(budgets, default=0.0)
 
 
 def planning_inputs(

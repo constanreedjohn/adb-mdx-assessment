@@ -34,6 +34,7 @@ from mdx_assessment.usecases.mdx.agents.ids import (
     MARKET_DATA_ASSESSMENT,
     NEAR_ZERO_CHECK,
     RECORD_CASES,
+    REVISE_DRAFTS,
 )
 from mdx_assessment.usecases.mdx.agents.input_validation import (
     IntakeResult,
@@ -45,7 +46,9 @@ from mdx_assessment.usecases.mdx.agents.investigate import (
 )
 from mdx_assessment.usecases.mdx.agents.market_data import (
     MarketAssessmentResult,
+    RevisionResult,
     near_zero_check,
+    revise_drafts,
 )
 from mdx_assessment.usecases.mdx.checks.review import (
     CHECKS,
@@ -127,6 +130,18 @@ TASKS = (
         ),
         review_checks=(FLAG_RECONCILIATION,),
         depends_on=(CHECK_FILES_AND_INTAKE,),
+    ),
+    TaskDefinition(
+        id=REVISE_DRAFTS,
+        agent=MARKET_DATA_ASSESSMENT,
+        description="Send-back only, never planned: revise the drafts of the flags a review "
+        "point named, with the teacher's reasons and each flag's remaining tool budget.",
+        output_model=RevisionResult,
+        handler=revise_drafts,
+        # The budget's history reads again (one per flag sent back), plus the tools.
+        budget=TaskBudget(max_calls=30, max_seconds=180),
+        prompts=((INVESTIGATE_PROMPT_ID, INVESTIGATE_PROMPT_VERSION),),
+        depends_on=(NEAR_ZERO_CHECK,),
     ),
     TaskDefinition(
         id=RECORD_CASES,

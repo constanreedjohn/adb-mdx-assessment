@@ -119,8 +119,12 @@ class SelectionRule(DomainModel):
 
 class PlaybookLimits(DomainModel):
     max_follow_up_rounds: int = Field(ge=0)
+    """Follow-ups the Master may put in its plan (P-3)."""
     max_run_seconds: int = Field(gt=0)
     max_ai_explanations: int = Field(ge=0)
+    max_send_backs: int = Field(default=0, ge=0)
+    """Follow-ups a review point may decide during the run (E6-05). Each must be a task
+    in `allowed_follow_ups`; the plan's time budget keeps room for them (P-3)."""
 
 
 class PlaybookDocument(DomainModel):

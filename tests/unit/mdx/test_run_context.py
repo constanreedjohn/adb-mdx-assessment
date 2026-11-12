@@ -173,7 +173,12 @@ async def test_playbook_selection_and_facts_appear_in_the_state(
 def test_real_normal_eod_is_selected_by_default(config: LoadedConfig) -> None:
     resolved = resolve_playbook([], PlaybookStore.from_config(config))
     assert resolved.id == "normal_eod"
-    assert resolved.content.allowed_follow_ups == ()  # none in Phase 1
+    # Phase 1: only the teacher's send-back, once per run (E6-05); none planned up front.
+    assert resolved.content.allowed_follow_ups == ("market_data.revise_drafts",)
+    assert (
+        resolved.content.limits.max_send_backs,
+        resolved.content.limits.max_follow_up_rounds,
+    ) == (1, 0)
     assert [s.step_id for s in resolved.content.default_plan] == [
         "validate_inputs",
         "assess_movements",

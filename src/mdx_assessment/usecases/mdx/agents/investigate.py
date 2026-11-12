@@ -19,6 +19,11 @@ whether to investigate further with the tools of E8-03.
 - **Template fallback**: written by code, keeping the starting verdict. Used when the
   LLM is off (no tools are run), beyond `max_ai_explanations`, when the model can't be
   reached, or when a round's output is unusable twice.
+- **Revise mode** (`revise`, E6-05): when the teacher sends named flags back, the same
+  loop runs again for those flags only, with the teacher's reason and what is left of
+  each flag's tool budget. The verdict rule still starts from code's label. If the
+  revision can't be completed (budget spent, LLM unusable), the flag ends at can't tell,
+  or its earlier verdict if that's more cautious: a challenged draft never stands as is.
 
 The LLM's output has no field for a label, a severity, a measure or the review order.
 """
@@ -27,7 +32,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from pydantic import Field, JsonValue
@@ -108,6 +113,8 @@ class StudentRound(DomainModel):
 
 class ToolCallRecord(DomainModel):
     round: int = Field(ge=1)
+    revision: int = Field(default=0, ge=0)
+    """0 for the first investigation, 1 for the send-back round."""
     tool: str
     arguments: dict[str, JsonValue]
     reason: str
@@ -132,6 +139,10 @@ class Draft(DomainModel):
     """What remains of the budget, for the send-back round (E6-05)."""
     rejections: tuple[str, ...] = ()
     """Why earlier drafts for this flag were sent back by code."""
+    revision: int = Field(default=0, ge=0)
+    """0 for the first draft, 1 after the teacher sent it back (E6-05)."""
+    teacher_feedback: str | None = None
+    """Why the teacher sent the previous draft back."""
 
 
 @dataclass
@@ -142,9 +153,14 @@ class _Open:
     explanation: Explanation
     start: Verdict
     calls_left: int
+    fallback_verdict: Verdict
+    """Where the flag ends if the loop can't conclude it with a usable draft."""
+    revision: int = 0
+    feedback: str | None = None
     evidence: list[Evidence] = field(default_factory=list)
     calls: list[ToolCallRecord] = field(default_factory=list)
     rejections: list[str] = field(default_factory=list)
+    sent_back_by_code: bool = False
 
     @property
     def flag_id(self) -> str:
@@ -179,21 +195,28 @@ def template_report(explanation: Explanation, verdict: Verdict, why: str) -> str
     return f"{explanation.text} Verdict: {_VERDICT_WORDS[verdict]} ({why})."
 
 
+_NOT_INVESTIGATED = "from code's label, not investigated"
+_NOT_REVISED = "the teacher's challenge could not be resolved"
+
+
 def _template(
     o: _Open, reason: str, verdict: Verdict | None = None, why: str | None = None
 ) -> Draft:
-    v = verdict or o.start
+    v = verdict or o.fallback_verdict
+    why = why or (_NOT_REVISED if o.revision else _NOT_INVESTIGATED)
     return Draft(
         flag_id=o.flag_id,
         starting_verdict=o.start,
         verdict=v,
-        report=template_report(o.explanation, v, why or "from code's label, not investigated"),
+        report=template_report(o.explanation, v, why),
         evidence_ids=o.explanation.evidence_ids,
         source=ExplanationSource.TEMPLATE,
         fallback_reason=reason,
         tool_calls=tuple(o.calls),
         tool_calls_left=o.calls_left,
         rejections=tuple(o.rejections),
+        revision=o.revision,
+        teacher_feedback=o.feedback,
     )
 
 
@@ -232,7 +255,9 @@ def round_inputs(
                 for c in o.calls
             ],
         }
-        if o.rejections:
+        if o.feedback:
+            row["teacher_feedback"] = o.feedback
+        if o.sent_back_by_code:
             row["draft_sent_back"] = o.rejections[-1]
         if o.item.comment:
             name = f"comment_{n}"
@@ -292,7 +317,11 @@ async def _run_tools(
             break  # the rest are over the budget: never run
         o.calls_left -= 1
         record = ToolCallRecord(
-            round=round_no, tool=request.tool, arguments=arguments, reason=request.reason
+            round=round_no,
+            revision=o.revision,
+            tool=request.tool,
+            arguments=arguments,
+            reason=request.reason,
         )
         try:
             evidence = await investigation.run(request.tool, arguments)
@@ -310,32 +339,18 @@ async def _run_tools(
 # --- the loop --------------------------------------------------------------------------------
 
 
-async def investigate(
-    items: Sequence[ItemToExplain],
-    explanations: Mapping[str, Explanation],
+async def _study(
+    flags: list[_Open],
     *,
-    gateway: LLMGateway | None,
-    llm_enabled: bool,
+    gateway: LLMGateway,
     session_id: str,
-    investigation: Investigation | None,
+    investigation: Investigation,
     settings: InvestigationSettings,
-    max_ai_explanations: int,
     tolerance: NumberTolerance,
 ) -> InvestigateOutcome:
-    flags = [
-        _Open(
-            item=i,
-            explanation=explanations[i.assessment.flag_id],
-            start=starting_verdict(i.assessment.classification),
-            calls_left=settings.max_tool_calls_per_flag,
-        )
-        for i in items
-    ]
-    if not llm_enabled or gateway is None or investigation is None:
-        return InvestigateOutcome({o.flag_id: _template(o, FALLBACK_LLM_OFF) for o in flags})
-
-    drafts = {o.flag_id: _template(o, FALLBACK_OVER_LIMIT) for o in flags[max_ai_explanations:]}
-    open_flags = flags[:max_ai_explanations]
+    """Rounds until every flag has a draft. Shared by the first pass and the revision."""
+    drafts: dict[str, Draft] = {}
+    open_flags = flags
     tool_evidence: list[Evidence] = []
     rejections: list[str] = []
     attempts = rounds = 0
@@ -374,7 +389,7 @@ async def investigate(
                     drafts[o.flag_id] = _template(
                         o,
                         FALLBACK_BUDGET_SPENT,
-                        at_least(o.start, Verdict.CANT_TELL),
+                        at_least(o.fallback_verdict, Verdict.CANT_TELL),
                         f"the {settings.max_tool_calls_per_flag} tool calls were spent "
                         "without a conclusion",
                     )
@@ -395,21 +410,115 @@ async def investigate(
                     tool_calls=tuple(o.calls),
                     tool_calls_left=o.calls_left,
                     rejections=tuple(o.rejections),
+                    revision=o.revision,
+                    teacher_feedback=o.feedback,
                 )
-            elif not o.rejections:
-                o.rejections.append("; ".join(problems))
-                still_open.append(o)  # sent back once, with the reasons
-            else:
-                o.rejections.append("; ".join(problems))
+                continue
+            o.rejections.append("; ".join(problems))
+            if o.sent_back_by_code:
                 drafts[o.flag_id] = _template(o, FALLBACK_DRAFT_REJECTED)
+            else:
+                o.sent_back_by_code = True
+                still_open.append(o)  # sent back once, with the reasons
         open_flags = still_open
 
     for o in open_flags:  # out of rounds: treated as a spent budget
         drafts[o.flag_id] = _template(
             o,
             FALLBACK_BUDGET_SPENT,
-            at_least(o.start, Verdict.CANT_TELL),
+            at_least(o.fallback_verdict, Verdict.CANT_TELL),
             "the investigation did not conclude",
         )
     unique = tuple({e.evidence_id: e for e in tool_evidence}.values())
     return InvestigateOutcome(drafts, unique, rounds, attempts, tuple(rejections))
+
+
+async def investigate(
+    items: Sequence[ItemToExplain],
+    explanations: Mapping[str, Explanation],
+    *,
+    gateway: LLMGateway | None,
+    llm_enabled: bool,
+    session_id: str,
+    investigation: Investigation | None,
+    settings: InvestigationSettings,
+    max_ai_explanations: int,
+    tolerance: NumberTolerance,
+) -> InvestigateOutcome:
+    """The first pass: every flag, from its crucial results and explanation."""
+    flags = []
+    for i in items:
+        start = starting_verdict(i.assessment.classification)
+        flags.append(
+            _Open(
+                item=i,
+                explanation=explanations[i.assessment.flag_id],
+                start=start,
+                calls_left=settings.max_tool_calls_per_flag,
+                fallback_verdict=start,
+            )
+        )
+    if not llm_enabled or gateway is None or investigation is None:
+        return InvestigateOutcome({o.flag_id: _template(o, FALLBACK_LLM_OFF) for o in flags})
+
+    beyond = {o.flag_id: _template(o, FALLBACK_OVER_LIMIT) for o in flags[max_ai_explanations:]}
+    outcome = await _study(
+        flags[:max_ai_explanations],
+        gateway=gateway,
+        session_id=session_id,
+        investigation=investigation,
+        settings=settings,
+        tolerance=tolerance,
+    )
+    return replace(outcome, drafts=beyond | outcome.drafts)
+
+
+@dataclass(frozen=True)
+class ToRevise:
+    """A flag the teacher sent back, with what the first pass left."""
+
+    item: ItemToExplain
+    explanation: Explanation
+    draft: Draft
+    feedback: str
+    tool_evidence: tuple[Evidence, ...]
+    """The evidence the draft's earlier tool calls returned."""
+
+
+async def revise(
+    flags: Sequence[ToRevise],
+    *,
+    gateway: LLMGateway | None,
+    llm_enabled: bool,
+    session_id: str,
+    investigation: Investigation | None,
+    settings: InvestigationSettings,
+    tolerance: NumberTolerance,
+) -> InvestigateOutcome:
+    """The send-back round (E6-05): the named flags only, with the teacher's reason and
+    what is left of each flag's budget."""
+    opened = [
+        _Open(
+            item=f.item,
+            explanation=f.explanation,
+            start=f.draft.starting_verdict,
+            calls_left=f.draft.tool_calls_left,
+            fallback_verdict=at_least(f.draft.verdict, Verdict.CANT_TELL),
+            revision=f.draft.revision + 1,
+            feedback=f.feedback,
+            evidence=list(f.tool_evidence),
+            calls=list(f.draft.tool_calls),
+            rejections=list(f.draft.rejections),
+        )
+        for f in flags
+    ]
+    if not llm_enabled or gateway is None or investigation is None:
+        return InvestigateOutcome({o.flag_id: _template(o, FALLBACK_LLM_OFF) for o in opened})
+    return await _study(
+        opened,
+        gateway=gateway,
+        session_id=session_id,
+        investigation=investigation,
+        settings=settings,
+        tolerance=tolerance,
+    )

@@ -23,6 +23,9 @@ class PlanStep(DomainModel):
     step_id: NonEmptyStr
     task: NonEmptyStr
     rationale: str = ""
+    arguments: dict[str, JsonValue] = Field(default_factory=dict)
+    """What a follow-up step works on, e.g. the flags a send-back names (E6-05). The task
+    validates them; planned steps have none."""
 
 
 class PlanValidation(DomainModel):

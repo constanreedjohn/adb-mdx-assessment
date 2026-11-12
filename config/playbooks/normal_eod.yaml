@@ -1,7 +1,8 @@
 # Normal end-of-day playbook (owner: core; plan §2.5, PDF §2.1). The default playbook.
-# Phase 1: no follow-ups are allowed yet. The bounded investigation loop is switched
-# on in SP9 (E10-08), when this playbook gains its PDF follow-ups: compare a file with
-# the prior day's, fetch longer history or related curves, re-assess one item.
+# One follow-up is allowed: the teacher's send-back of named flags to the Market Data
+# Assessment Agent (E6-05), decided at a review point, never planned. More follow-ups
+# arrive in SP9 (E10-08): compare a file with the prior day's, fetch longer history or
+# related curves, re-assess one item.
 
 id: normal_eod
 version: "1"
@@ -20,10 +21,12 @@ mandatory_steps:
   - market_data.near_zero_check
   - escalation_reporting.record_cases
 
-allowed_follow_ups: []
+allowed_follow_ups:
+  - market_data.revise_drafts   # send-back only (max_send_backs)
 
 limits:
-  max_follow_up_rounds: 0
+  max_follow_up_rounds: 0    # follow-ups the Master may plan up front
+  max_send_backs: 1          # follow-ups review points may decide during the run
   max_run_seconds: 600
   max_ai_explanations: 100
 

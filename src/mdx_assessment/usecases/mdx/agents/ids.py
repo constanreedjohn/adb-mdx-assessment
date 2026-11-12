@@ -6,4 +6,5 @@ ESCALATION_REPORTING = "escalation_reporting"
 
 CHECK_FILES_AND_INTAKE = "input_validation.check_files_and_intake"
 NEAR_ZERO_CHECK = "market_data.near_zero_check"
+REVISE_DRAFTS = "market_data.revise_drafts"
 RECORD_CASES = "escalation_reporting.record_cases"

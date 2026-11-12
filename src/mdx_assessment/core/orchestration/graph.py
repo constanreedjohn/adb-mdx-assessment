@@ -1,8 +1,8 @@
 """The session graph: plan-driven dispatcher with a review point after every step (plan §2.6).
 
     START → run_context → select_playbook → master_plan ─┬─→ dispatch → review_point ─┐
-                                                        │        ↑                    │ more steps
-                                                        │        └────────────────────┘
+                                                        │        ↑                    │ more steps,
+                                                        │        └────────────────────┘ or a send-back
                                                         └──────────→ master_synthesize → END
 
 - **The Master decides, code executes.** The decision points (gather context, select
@@ -21,6 +21,11 @@
 - **No facts stops the run.** If the source system can't be read at session start,
   there is nothing to check: the run ends `failed` with a notice for the analyst, and
   the full cause goes to the log.
+- **Send-backs (E6-05).** A review point may decide `follow_up`: send the step's work
+  back, for example named flags to revise. Code checks it first: the follow-up's task
+  must be one the playbook allows (P-2) and the run must be within the playbook's
+  `max_send_backs` (P-3). An allowed send-back runs next, before the rest of the plan,
+  and gets its own review point; a refused one flags the step for a human instead.
 - **Tracing.** Every node is a span in the session's MLflow trace.
 - Every plan, task and decision is an audit event.
 """
@@ -120,6 +125,32 @@ async def _no_playbook(state: RunState) -> ResolvedPlaybook | None:
 
 
 RAN = (TaskStatus.DONE, TaskStatus.DONE_WITH_FALLBACK)
+
+
+def send_backs_so_far(state: RunState) -> int:
+    """Follow-ups review points have queued in this run."""
+    return sum(
+        1 for d in state.decisions if d.kind is DecisionKind.FOLLOW_UP and d.follow_up is not None
+    )
+
+
+def send_back_refusal(state: RunState, decision: Decision) -> str | None:
+    """Why a `follow_up` decision can't run (P-2, P-3), or None when it can."""
+    step = decision.follow_up
+    assert step is not None  # a follow_up decision always names its step
+    playbook = state.playbook
+    if playbook is None:
+        return "P-2: no playbook is selected, so no follow-up is allowed"
+    content = playbook.content
+    if step.task not in content.allowed_follow_ups:
+        return f"P-2: follow-up {step.task!r} is not allowed by playbook {playbook.id!r}"
+    used, limit = send_backs_so_far(state), content.limits.max_send_backs
+    if used >= limit:
+        return f"P-3: the playbook allows {limit} send-back(s) per run, and {used} already ran"
+    planned = {s.step_id for s in state.plan.steps} if state.plan else set()
+    if step.step_id in planned or any(e.step_id == step.step_id for e in state.execution):
+        return f"step_id {step.step_id!r} is already used in this run"
+    return None
 
 
 def _blocked_by(state: RunState, depends_on: tuple[str, ...]) -> str | None:
@@ -305,7 +336,8 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
 
     async def dispatch(state: RunState) -> dict[str, Any]:
         assert state.plan is not None  # guaranteed by routing
-        step = state.plan.steps[state.next_step]
+        queued = state.queued_step
+        step = queued if queued is not None else state.plan.steps[state.next_step]
         started_at, started = runtime.clock(), time.perf_counter()
         status, error, result = TaskStatus.DONE, None, None
         definition = runtime.tasks.get(step.task)
@@ -388,7 +420,11 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
                 **({"error": error} if error else {}),
             },
         )
-        update: dict[str, Any] = {"execution": [entry], "next_step": state.next_step + 1}
+        update: dict[str, Any] = {"execution": [entry]}
+        if queued is not None:
+            update["queued_step"] = None  # the plan resumes where it was
+        else:
+            update["next_step"] = state.next_step + 1
         if result is not None:
             update["agent_results"] = {step.step_id: result}
         return update
@@ -403,6 +439,34 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
             for c in check_ids
         ]
         decision = await hooks.decide(state, entry, results)
+        refused = (
+            send_back_refusal(state, decision) if decision.kind is DecisionKind.FOLLOW_UP else None
+        )
+        if refused is not None:
+            assert decision.follow_up is not None
+            logger.warning(
+                "session %s step %s: send-back refused: %s",
+                state.session_id,
+                entry.step_id,
+                refused,
+            )
+            await runtime.record(
+                state,
+                MASTER_AGENT,
+                "send_back_refused",
+                {
+                    "step_id": entry.step_id,
+                    "follow_up": decision.follow_up.model_dump(mode="json"),
+                    "reason": refused,
+                },
+            )
+            decision = Decision(
+                step_id=entry.step_id,
+                kind=DecisionKind.FLAG_FOR_HUMAN,
+                reason=f"send-back refused ({refused}); the step's last output stands",
+                source=DecisionSource.RULE,
+                evidence_ids=decision.evidence_ids,
+            )
         await runtime.record(
             state,
             MASTER_AGENT,
@@ -413,9 +477,17 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
                 "source": decision.source.value,
                 "reason": decision.reason,
                 "checks": {r.check_id: r.passed for r in results},
+                **(
+                    {"follow_up": decision.follow_up.model_dump(mode="json")}
+                    if decision.follow_up is not None
+                    else {}
+                ),
             },
         )
-        return {"review_checks": results, "decisions": [decision]}
+        update: dict[str, Any] = {"review_checks": results, "decisions": [decision]}
+        if decision.follow_up is not None:
+            update["queued_step"] = decision.follow_up
+        return update
 
     async def master_synthesize(state: RunState) -> dict[str, Any]:
         failed = [e.step_id for e in state.execution if e.status is TaskStatus.FAILED]
@@ -456,6 +528,8 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
 
     def after_review(state: RunState) -> Literal["dispatch", "master_synthesize"]:
         assert state.plan is not None
+        if state.queued_step is not None:
+            return "dispatch"
         return "dispatch" if state.next_step < len(state.plan.steps) else "master_synthesize"
 
     graph: StateGraph[RunState] = StateGraph(RunState)

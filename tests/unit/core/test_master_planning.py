@@ -68,7 +68,7 @@ async def produce(ctx: TaskContext) -> BaseModel:
 
 
 def playbook(
-    follow_ups: tuple[str, ...] = (), rounds: int = 0, seconds: int = 600
+    follow_ups: tuple[str, ...] = (), rounds: int = 0, seconds: int = 600, send_backs: int = 0
 ) -> ResolvedPlaybook:
     return ResolvedPlaybook(
         id="toy_playbook",
@@ -80,7 +80,10 @@ def playbook(
             mandatory_steps=(FIRST, SECOND),
             allowed_follow_ups=follow_ups,
             limits=PlaybookLimits(
-                max_follow_up_rounds=rounds, max_run_seconds=seconds, max_ai_explanations=1
+                max_follow_up_rounds=rounds,
+                max_run_seconds=seconds,
+                max_ai_explanations=1,
+                max_send_backs=send_backs,
             ),
             default_plan=(
                 PlanStep(step_id="default_1", task=FIRST),
@@ -222,6 +225,16 @@ def test_p3_follow_up_round_limit() -> None:
 def test_p3_allows_a_follow_up_within_the_limit() -> None:
     checks, _ = check(reply(follow_ups=[step(EXTRA)]), playbook(follow_ups=(EXTRA,), rounds=1))
     assert all(checks.values())
+
+
+def test_p3_keeps_room_for_the_send_backs_the_playbook_allows() -> None:
+    # Two steps of 60s each, plus one send-back of the 60s follow-up: 180s.
+    book = playbook(follow_ups=(EXTRA,), seconds=150, send_backs=1)
+    checks, errors = check(reply(), book)
+    assert checks["P-3"] is False
+    assert "total 120s plus 60s kept for send-backs, over the run limit of 150s" in errors
+    checks, _ = check(reply(), playbook(follow_ups=(EXTRA,), seconds=180, send_backs=1))
+    assert checks["P-3"] is True
 
 
 def test_p3_time_budgets_must_fit_the_run_limit() -> None:

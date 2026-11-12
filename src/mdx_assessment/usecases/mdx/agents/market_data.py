@@ -17,16 +17,23 @@ Deterministic core, then explanation, then investigation:
    caution. Tools read through the same `MdxReads` as step 2, so they reuse its reads.
 
 The labels and the review order come only from steps 1 to 4. Nothing after can change them.
+
+Task `market_data.revise_drafts` (E6-05) is the send-back: it runs only when a review
+point decides a follow-up naming flags of an earlier near-zero step, and re-runs step 6
+for those flags with the teacher's reasons. `current_drafts` gives each flag's latest
+draft across both.
 """
 
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from mdx_assessment.core.domain import Evidence, Finding, Measure
 from mdx_assessment.core.gateway.grounding import GUARDRAILS_PATH, GuardrailsConfig
+from mdx_assessment.core.orchestration.state import ExecutionEntry
 from mdx_assessment.core.orchestration.tasks import TaskContext
 from mdx_assessment.usecases.mdx.agents.explanations import (
     FALLBACK_REJECTED,
@@ -35,9 +42,19 @@ from mdx_assessment.usecases.mdx.agents.explanations import (
     ItemToExplain,
     explain,
 )
-from mdx_assessment.usecases.mdx.agents.ids import CHECK_FILES_AND_INTAKE, NEAR_ZERO_CHECK
+from mdx_assessment.usecases.mdx.agents.ids import (
+    CHECK_FILES_AND_INTAKE,
+    NEAR_ZERO_CHECK,
+    REVISE_DRAFTS,
+)
 from mdx_assessment.usecases.mdx.agents.input_validation import IntakeResult
-from mdx_assessment.usecases.mdx.agents.investigate import UNUSABLE, Draft, investigate
+from mdx_assessment.usecases.mdx.agents.investigate import (
+    UNUSABLE,
+    Draft,
+    ToRevise,
+    investigate,
+    revise,
+)
 from mdx_assessment.usecases.mdx.checks.near_zero import (
     Classification,
     HistoryStats,
@@ -320,3 +337,139 @@ async def near_zero_check(ctx: TaskContext) -> MarketAssessmentResult:
             for i in items
         ),
     )
+
+
+# --- the send-back round (E6-05) -----------------------------------------------------------
+
+
+class ReviseArguments(BaseModel):
+    """The follow-up step's `arguments`, as the teacher's send-back decision gives them."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    of_step: str = Field(min_length=1)
+    """The near-zero step whose drafts are sent back."""
+    flags: dict[str, str] = Field(min_length=1)
+    """Flag ID → why the teacher sent its draft back."""
+
+
+class RevisionResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    of_step: str
+    drafts: tuple[Draft, ...]
+    """The revised drafts, in review order."""
+    verdicts: dict[Verdict, int]
+    """Of the revised drafts."""
+    investigation_rounds: int = Field(ge=0)
+    investigation_attempts: int = Field(ge=0)
+    tool_calls: int = Field(ge=0)
+    """Tool calls made in this revision."""
+    investigation_rejections: tuple[str, ...] = ()
+    evidence: tuple[Evidence, ...] = ()
+    """The records the revision's tools returned."""
+    used_fallback: bool = False
+
+
+def _sent_back(ctx: TaskContext, args: ReviseArguments) -> MarketAssessmentResult:
+    ran = next((e for e in ctx.state.execution if e.step_id == args.of_step), None)
+    if ran is None or ran.task != NEAR_ZERO_CHECK:
+        raise ValueError(f"step {args.of_step!r} is not a near-zero step of this run")
+    raw = ctx.state.agent_results.get(args.of_step)
+    if raw is None:
+        raise ValueError(f"step {args.of_step!r} has no result to revise")
+    return MarketAssessmentResult.model_validate(raw)
+
+
+async def revise_drafts(ctx: TaskContext) -> RevisionResult:
+    args = ReviseArguments.model_validate(ctx.step.arguments)
+    original = _sent_back(ctx, args)
+    raw = ctx.result_of(CHECK_FILES_AND_INTAKE)
+    if raw is None:
+        raise ValueError("revising drafts needs a completed intake step")
+    intake = IntakeResult.model_validate(raw)
+    unknown = sorted(set(args.flags) - {i.assessment.flag_id for i in original.items})
+    if unknown:
+        raise ValueError(f"step {args.of_step!r} has no draft for flag(s) {unknown}")
+
+    records = {e.evidence_id: e for e in (*intake.evidence, *original.evidence)}
+    normalized = {f.flag_id: f for f in intake.normalized_flags}
+    to_revise = []
+    for item in original.items:  # review order
+        flag_id = item.assessment.flag_id
+        if flag_id not in args.flags:
+            continue
+        flag = normalized[flag_id]
+        profile = intake.profiles[flag.kind]
+        to_revise.append(
+            ToRevise(
+                item=ItemToExplain(
+                    assessment=item.assessment,
+                    finding=item.finding,
+                    evidence=tuple(records[i] for i in item.finding.evidence_ids),
+                    units=measure_units(profile),
+                    measure_unit=profile.measure_unit,
+                    comment=flag.comment,
+                ),
+                explanation=item.explanation,
+                draft=item.draft,
+                feedback=args.flags[flag_id],
+                tool_evidence=tuple(
+                    records[c.evidence_id] for c in item.draft.tool_calls if c.evidence_id
+                ),
+            )
+        )
+
+    near_zero = ctx.config.get(NEAR_ZERO_PATH, NearZeroSettings)
+    tools = ctx.config.get(INVESTIGATION_PATH, InvestigationSettings)
+    outcome = await revise(
+        to_revise,
+        gateway=ctx.gateway,
+        llm_enabled=ctx.state.llm_enabled,
+        session_id=ctx.inputs.session_id,
+        investigation=Investigation(
+            MdxReads(ctx.tools),
+            [normalized[f.item.assessment.flag_id] for f in to_revise],
+            intake.profiles,
+            ctx.inputs.business_date,
+            DataType(ctx.inputs.data_type),
+            tools,
+            near_zero.history_window_days + 1,
+        ),
+        settings=tools,
+        tolerance=ctx.config.get(GUARDRAILS_PATH, GuardrailsConfig).number_matching,
+    )
+    drafts = tuple(outcome.drafts[f.item.assessment.flag_id] for f in to_revise)
+    verdicts = Counter(d.verdict for d in drafts)
+    return RevisionResult(
+        of_step=args.of_step,
+        drafts=drafts,
+        verdicts={v: verdicts.get(v, 0) for v in Verdict},
+        investigation_rounds=outcome.rounds,
+        investigation_attempts=outcome.llm_attempts,
+        tool_calls=sum(1 for d in drafts for c in d.tool_calls if c.revision == d.revision),
+        investigation_rejections=outcome.rejections,
+        evidence=outcome.tool_evidence,
+        used_fallback=any(d.fallback_reason in UNUSABLE for d in drafts),
+    )
+
+
+def current_drafts(
+    execution: Sequence[ExecutionEntry], results: Mapping[str, Mapping[str, JsonValue]]
+) -> dict[str, Draft]:
+    """Each flag's latest draft: the near-zero step's, replaced by any revision of it that
+    ran. In review order (the near-zero step's)."""
+    drafts: dict[str, Draft] = {}
+    for entry in execution:
+        raw = results.get(entry.step_id)
+        if raw is None or entry.status.value not in ("done", "done_with_fallback"):
+            continue
+        if entry.task == NEAR_ZERO_CHECK:
+            drafts = {
+                i.draft.flag_id: i.draft for i in MarketAssessmentResult.model_validate(raw).items
+            }
+        elif entry.task == REVISE_DRAFTS:
+            for d in RevisionResult.model_validate(raw).drafts:
+                if d.flag_id in drafts:
+                    drafts[d.flag_id] = d
+    return drafts
