@@ -18,10 +18,13 @@ from mdx_assessment.core.domain import (
     ChainVerification,
     Decision,
     DecisionKind,
+    DecisionSource,
     DomainModel,
     Evidence,
     Fact,
     Finding,
+    ItemDecision,
+    ItemDecisionKind,
     Measure,
     NewAuditEvent,
     Plan,
@@ -36,6 +39,7 @@ from mdx_assessment.core.domain import (
     SessionResult,
     SessionStatus,
     Severity,
+    StepValidation,
     Task,
     TaskStatus,
     TraceRef,
@@ -126,7 +130,25 @@ OBSERVATION = RunObservation(
     id="obs-late-file", text="File late, inside grace period", fact_ids=(FACT.id,)
 )
 
+STEP_VALIDATION = StepValidation(
+    step_id="assess_movements",
+    validated=True,
+    summary="1 of 2 drafts sent back",
+    decisions=(
+        ItemDecision(item_id="f1", kind=ItemDecisionKind.ACCEPT, source=DecisionSource.LLM_REVIEW),
+        ItemDecision(
+            item_id="f2",
+            kind=ItemDecisionKind.SEND_BACK,
+            reason="check the neighbours",
+            source=DecisionSource.LLM_REVIEW,
+        ),
+    ),
+    llm_attempts=1,
+)
+
 SAMPLES: list[BaseModel] = [
+    STEP_VALIDATION,
+    STEP_VALIDATION.decisions[1],
     RunReview(
         reliability=Reliability.LOW,
         reasons=("step 'assess_movements' needs a human",),

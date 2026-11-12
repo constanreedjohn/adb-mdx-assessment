@@ -50,6 +50,9 @@ from mdx_assessment.usecases.mdx.agents.market_data import (
     near_zero_check,
     revise_drafts,
 )
+from mdx_assessment.usecases.mdx.agents.teacher import PROMPT_ID as VALIDATE_PROMPT_ID
+from mdx_assessment.usecases.mdx.agents.teacher import PROMPT_VERSION as VALIDATE_PROMPT_VERSION
+from mdx_assessment.usecases.mdx.agents.teacher import validate_drafts
 from mdx_assessment.usecases.mdx.checks.review import (
     CHECKS,
     DATASET_COMPLETENESS,
@@ -127,7 +130,9 @@ TASKS = (
         prompts=(
             (EXPLAIN_PROMPT_ID, EXPLAIN_PROMPT_VERSION),
             (INVESTIGATE_PROMPT_ID, INVESTIGATE_PROMPT_VERSION),
+            (VALIDATE_PROMPT_ID, VALIDATE_PROMPT_VERSION),
         ),
+        validate=validate_drafts,
         review_checks=(FLAG_RECONCILIATION,),
         depends_on=(CHECK_FILES_AND_INTAKE,),
     ),
@@ -140,8 +145,12 @@ TASKS = (
         handler=revise_drafts,
         # The budget's history reads again (one per flag sent back), plus the tools.
         budget=TaskBudget(max_calls=30, max_seconds=180),
-        prompts=((INVESTIGATE_PROMPT_ID, INVESTIGATE_PROMPT_VERSION),),
+        prompts=(
+            (INVESTIGATE_PROMPT_ID, INVESTIGATE_PROMPT_VERSION),
+            (VALIDATE_PROMPT_ID, VALIDATE_PROMPT_VERSION),
+        ),
         depends_on=(NEAR_ZERO_CHECK,),
+        validate=validate_drafts,
     ),
     TaskDefinition(
         id=RECORD_CASES,

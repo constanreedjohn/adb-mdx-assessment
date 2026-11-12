@@ -26,6 +26,11 @@
   must be one the playbook allows (P-2) and the run must be within the playbook's
   `max_send_backs` (P-3). An allowed send-back runs next, before the rest of the plan,
   and gets its own review point; a refused one flags the step for a human instead.
+- **Per-item review (E10-05).** A task may register a validator: the Master's review of
+  each item of its output, e.g. each flag's draft verdict. It runs at the review point
+  after the checks and the step decision, is recorded with every item's decision, and
+  may propose a send-back of named items. The send-back is taken only when the step
+  itself was accepted, and is checked like any other.
 - **Tracing.** Every node is a span in the session's MLflow trace.
 - Every plan, task and decision is an audit event.
 """
@@ -49,6 +54,7 @@ from mdx_assessment.core.domain import (
     Decision,
     DecisionKind,
     DecisionSource,
+    ItemDecisionKind,
     NewAuditEvent,
     Plan,
     Reliability,
@@ -68,6 +74,7 @@ from mdx_assessment.core.orchestration.tasks import (
     TaskContext,
     TaskInput,
     TaskRegistry,
+    ValidationContext,
 )
 from mdx_assessment.core.persistence.audit import AuditTrail
 from mdx_assessment.core.tools.client import ToolHub
@@ -199,6 +206,16 @@ def run_review(state: RunState) -> RunReview:
     medium = ["the playbook's default plan ran"] if used_default else []
     medium += [f"step {s!r} used a template fallback" for s in templated]
     medium += [f"step {s!r} was accepted despite a failed check" for s in overridden]
+    medium += [
+        f"step {v.step_id!r}: its items were not reviewed by the Master"
+        for v in state.validations
+        if not v.validated and state.llm_enabled
+    ]
+    unresolved = sum(
+        1 for v in state.validations for d in v.decisions if d.kind is ItemDecisionKind.UNRESOLVED
+    )
+    if unresolved:
+        medium.append(f"{unresolved} item(s) ended unresolved after the Master's review")
     if low:
         reliability, reasons = Reliability.LOW, low + medium
     elif medium:
@@ -439,6 +456,46 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
             for c in check_ids
         ]
         decision = await hooks.decide(state, entry, results)
+        update: dict[str, Any] = {"review_checks": results}
+        if definition is not None and definition.validate is not None and entry.status in RAN:
+            outcome = await definition.validate(
+                ValidationContext(
+                    state=state,
+                    entry=entry,
+                    gateway=runtime.gateway,
+                    loaded_config=runtime.config,
+                    send_back_refusal=lambda step: send_back_refusal(
+                        state,
+                        Decision(
+                            step_id=entry.step_id,
+                            kind=DecisionKind.FOLLOW_UP,
+                            reason="check",
+                            follow_up=step,
+                        ),
+                    ),
+                )
+            )
+            validation = outcome.validation
+            await runtime.record(
+                state,
+                MASTER_AGENT,
+                "item_decisions",
+                {
+                    "step_id": entry.step_id,
+                    "validated": validation.validated,
+                    "summary": validation.summary,
+                    "decisions": [d.model_dump(mode="json") for d in validation.decisions],
+                },
+            )
+            update["validations"] = [validation]
+            if outcome.send_back is not None and decision.kind is DecisionKind.ACCEPT:
+                decision = Decision(
+                    step_id=entry.step_id,
+                    kind=DecisionKind.FOLLOW_UP,
+                    reason=validation.summary,
+                    source=DecisionSource.LLM_REVIEW,
+                    follow_up=outcome.send_back,
+                )
         refused = (
             send_back_refusal(state, decision) if decision.kind is DecisionKind.FOLLOW_UP else None
         )
@@ -484,7 +541,7 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
                 ),
             },
         )
-        update: dict[str, Any] = {"review_checks": results, "decisions": [decision]}
+        update["decisions"] = [decision]
         if decision.follow_up is not None:
             update["queued_step"] = decision.follow_up
         return update

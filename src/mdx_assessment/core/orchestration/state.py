@@ -29,6 +29,7 @@ from mdx_assessment.core.domain import (
     RunContext,
     RunReview,
     SessionStatus,
+    StepValidation,
     TaskStatus,
     Versions,
 )
@@ -90,6 +91,8 @@ class RunState(BaseModel):
 
     review_checks: Annotated[list[ReviewCheckResult], operator.add] = Field(default_factory=list)
     decisions: Annotated[list[Decision], operator.add] = Field(default_factory=list)
+    validations: Annotated[list[StepValidation], operator.add] = Field(default_factory=list)
+    """The Master's per-item review of each step whose task has a validator (E10-05)."""
     run_opinion: dict[str, JsonValue] | None = None
     """The Master Agent's run opinion (typed in E10-02)."""
     review: RunReview | None = None

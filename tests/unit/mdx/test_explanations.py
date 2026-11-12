@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from tests.support import investigate_from_inputs
+from tests.support import accept_all, investigate_from_inputs
 
 from mdx_assessment.app import build_registries, load_config
 from mdx_assessment.core.domain import Evidence, PlanStep
@@ -163,7 +163,13 @@ async def run(
         update={"app": AppSettings(config_dir=base.app.config_dir, data_dir=data_dir)}
     )
     audit = InMemoryAuditTrail()
-    fake = FakeProvider({"mda_explain": script, "mda_investigate": investigate_from_inputs})
+    fake = FakeProvider(
+        {
+            "mda_explain": script,
+            "mda_investigate": investigate_from_inputs,
+            "master_validate": accept_all,
+        }
+    )
     gateway = LLMGateway(provider or fake, PromptStore(PROJECT_ROOT / "config"), audit)
     context = ToolContext(config=CONFIG, settings=settings, audit=audit, cases=InMemoryCaseStore())
     registries = build_registries()

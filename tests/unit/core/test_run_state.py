@@ -119,6 +119,10 @@ def test_allow_list_is_derived_from_the_state() -> None:
         "DecisionSource",
         "RunReview",
         "Reliability",
+        # E10-05: the Master's per-item review
+        "StepValidation",
+        "ItemDecision",
+        "ItemDecisionKind",
     }
 
 

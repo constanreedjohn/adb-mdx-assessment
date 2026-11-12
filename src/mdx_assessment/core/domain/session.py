@@ -18,7 +18,12 @@ from mdx_assessment.core.domain.base import DomainModel
 from mdx_assessment.core.domain.evidence import NonEmptyStr
 from mdx_assessment.core.domain.findings import Finding
 from mdx_assessment.core.domain.planning import Plan, PlanSource, Task, TaskStatus
-from mdx_assessment.core.domain.review import Decision, ReviewCheckResult, RunReview
+from mdx_assessment.core.domain.review import (
+    Decision,
+    ReviewCheckResult,
+    RunReview,
+    StepValidation,
+)
 from mdx_assessment.core.domain.run_context import RunContext
 
 
@@ -65,6 +70,8 @@ class SessionResult(DomainModel):
     agent_results: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
     review_checks: tuple[ReviewCheckResult, ...] = ()
     decisions: tuple[Decision, ...] = ()
+    validations: tuple[StepValidation, ...] = ()
+    """The Master's per-item review of each step that has one (E10-05)."""
     findings: tuple[Finding, ...] = ()
     run_opinion: dict[str, JsonValue] | None = None
     review: RunReview | None = None

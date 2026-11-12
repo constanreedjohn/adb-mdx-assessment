@@ -371,6 +371,22 @@ class RevisionResult(BaseModel):
     used_fallback: bool = False
 
 
+def item_to_explain(
+    item: AssessedItem, intake: IntakeResult, records: Mapping[str, Evidence]
+) -> ItemToExplain:
+    """An assessed item with its crucial evidence and units, as the loop and checks need."""
+    flag = next(f for f in intake.normalized_flags if f.flag_id == item.assessment.flag_id)
+    profile = intake.profiles[flag.kind]
+    return ItemToExplain(
+        assessment=item.assessment,
+        finding=item.finding,
+        evidence=tuple(records[i] for i in item.finding.evidence_ids),
+        units=measure_units(profile),
+        measure_unit=profile.measure_unit,
+        comment=flag.comment,
+    )
+
+
 def _sent_back(ctx: TaskContext, args: ReviseArguments) -> MarketAssessmentResult:
     ran = next((e for e in ctx.state.execution if e.step_id == args.of_step), None)
     if ran is None or ran.task != NEAR_ZERO_CHECK:
@@ -394,31 +410,19 @@ async def revise_drafts(ctx: TaskContext) -> RevisionResult:
 
     records = {e.evidence_id: e for e in (*intake.evidence, *original.evidence)}
     normalized = {f.flag_id: f for f in intake.normalized_flags}
-    to_revise = []
-    for item in original.items:  # review order
-        flag_id = item.assessment.flag_id
-        if flag_id not in args.flags:
-            continue
-        flag = normalized[flag_id]
-        profile = intake.profiles[flag.kind]
-        to_revise.append(
-            ToRevise(
-                item=ItemToExplain(
-                    assessment=item.assessment,
-                    finding=item.finding,
-                    evidence=tuple(records[i] for i in item.finding.evidence_ids),
-                    units=measure_units(profile),
-                    measure_unit=profile.measure_unit,
-                    comment=flag.comment,
-                ),
-                explanation=item.explanation,
-                draft=item.draft,
-                feedback=args.flags[flag_id],
-                tool_evidence=tuple(
-                    records[c.evidence_id] for c in item.draft.tool_calls if c.evidence_id
-                ),
-            )
+    to_revise = [
+        ToRevise(
+            item=item_to_explain(item, intake, records),
+            explanation=item.explanation,
+            draft=item.draft,
+            feedback=args.flags[item.assessment.flag_id],
+            tool_evidence=tuple(
+                records[c.evidence_id] for c in item.draft.tool_calls if c.evidence_id
+            ),
         )
+        for item in original.items  # review order
+        if item.assessment.flag_id in args.flags
+    ]
 
     near_zero = ctx.config.get(NEAR_ZERO_PATH, NearZeroSettings)
     tools = ctx.config.get(INVESTIGATION_PATH, InvestigationSettings)

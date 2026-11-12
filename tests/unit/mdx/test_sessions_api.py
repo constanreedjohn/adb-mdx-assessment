@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.memory import InMemorySaver
-from tests.support import CapturedTraces, explain_from_inputs, investigate_from_inputs
+from tests.support import CapturedTraces, accept_all, explain_from_inputs, investigate_from_inputs
 
 from mdx_assessment.app import build_registries, load_config
 from mdx_assessment.core.api import create_app
@@ -87,6 +87,7 @@ def client_for(
                 "master_plan": script,
                 "mda_explain": explain_from_inputs,
                 "mda_investigate": investigate_from_inputs,
+                "master_validate": accept_all,
             }
         )
         return create_llm_gateway(trail, active, settings, fake)
@@ -138,6 +139,7 @@ def test_post_then_get_on_the_simulated_day(client: TestClient, config: LoadedCo
             "master_review": "v1",
             "mda_explain": "v1",
             "mda_investigate": "v1",
+            "master_validate": "v1",
         },
         "llm_deployment": "fake",
         "ml_model": None,
@@ -177,6 +179,7 @@ class ClosingProvider(FakeProvider):
                 "master_plan": script,
                 "mda_explain": explain_from_inputs,
                 "mda_investigate": investigate_from_inputs,
+                "master_validate": accept_all,
             }
         )
         self.closed = False

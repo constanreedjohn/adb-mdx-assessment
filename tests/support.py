@@ -59,3 +59,20 @@ def conclude(flag: dict[str, Any], verdict: str | None = None) -> dict[str, Any]
 def investigate_from_inputs(request: LLMRequest) -> dict[str, Any]:
     """A fake `mda_investigate` reply that concludes every flag at once: always valid."""
     return {"steps": [conclude(f) for f in investigation_flags(request)]}
+
+
+def review_flags(request: LLMRequest) -> list[dict[str, Any]]:
+    """The drafts a `master_validate` request asks about, read back from its inputs."""
+    text = request.user_message.removeprefix("Inputs (JSON):\n").split("\n\n")[0]
+    flags: list[dict[str, Any]] = json.loads(text)["flags"]
+    return flags
+
+
+def accept_all(request: LLMRequest) -> dict[str, Any]:
+    """A fake `master_validate` reply that accepts every draft."""
+    return {
+        "reviews": [
+            {"flag_id": f["flag_id"], "decision": "accept", "reason": "follows from the evidence"}
+            for f in review_flags(request)
+        ]
+    }

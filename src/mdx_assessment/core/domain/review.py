@@ -55,6 +55,37 @@ class Decision(DomainModel):
         return self
 
 
+class ItemDecisionKind(StrEnum):
+    """The Master's decision on one item of a step's output (E10-05), e.g. one flag's draft."""
+
+    ACCEPT = "accept"
+    SEND_BACK = "send_back"  # sent back to its agent once, with a reason
+    UNRESOLVED = "unresolved"
+    """The item ends without an accepted draft: code rejected it, or the Master rejected
+    its revision, or its send-back couldn't run. The pack decides what that means."""
+    NOT_VALIDATED = "not_validated"  # the LLM was off or its review wasn't usable
+
+
+class ItemDecision(DomainModel):
+    item_id: NonEmptyStr
+    kind: ItemDecisionKind
+    reason: str = ""
+    source: DecisionSource
+    revision: int = 0
+    """Which draft was reviewed: 0 the first, 1 after a send-back."""
+
+
+class StepValidation(DomainModel):
+    """The Master's per-item review of one step's output, after the step's checks."""
+
+    step_id: NonEmptyStr
+    validated: bool
+    """False when no item was reviewed by the Master (LLM off or review unusable)."""
+    summary: str
+    decisions: tuple[ItemDecision, ...] = ()
+    llm_attempts: int = 0
+
+
 class Reliability(StrEnum):
     HIGH = "high"
     MEDIUM = "medium"

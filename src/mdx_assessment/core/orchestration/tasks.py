@@ -21,7 +21,7 @@ from typing import Any
 from pydantic import BaseModel, JsonValue
 
 from mdx_assessment.core.config import LoadedConfig
-from mdx_assessment.core.domain import PlanStep, ReviewCheckResult
+from mdx_assessment.core.domain import PlanStep, ReviewCheckResult, StepValidation
 from mdx_assessment.core.gateway.gateway import LLMGateway
 from mdx_assessment.core.orchestration.state import ExecutionEntry, RunState
 from mdx_assessment.core.tools.client import AgentToolClient, TaskBudget
@@ -88,6 +88,37 @@ class TaskDefinition:
     depends_on: tuple[str, ...] = ()
     """Task IDs whose output this task needs. If the latest run of one failed or was
     skipped, the dispatcher skips this task instead of running it on missing input."""
+    validate: ItemValidator | None = None
+    """The Master's per-item review of this task's output (E10-05), run at its review
+    point after the checks. It may propose a send-back."""
+
+
+@dataclass(frozen=True)
+class ValidationContext:
+    """What a validator may use at a review point."""
+
+    state: RunState
+    entry: ExecutionEntry
+    gateway: LLMGateway | None
+    loaded_config: LoadedConfig | None
+    send_back_refusal: Callable[[PlanStep], str | None]
+    """Why a send-back with this step would be refused (P-2, P-3), or None if it can run."""
+
+    @property
+    def config(self) -> LoadedConfig:
+        if self.loaded_config is None:
+            raise RuntimeError("no configuration is available to this run")
+        return self.loaded_config
+
+
+@dataclass(frozen=True)
+class ValidationOutcome:
+    validation: StepValidation
+    send_back: PlanStep | None = None
+    """The follow-up to run for the items sent back, if any."""
+
+
+ItemValidator = Callable[[ValidationContext], Awaitable[ValidationOutcome]]
 
 
 USED_FALLBACK = "used_fallback"

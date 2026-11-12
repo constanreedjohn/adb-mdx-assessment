@@ -240,6 +240,7 @@ class SessionService:
             agent_results=state.agent_results,
             review_checks=tuple(state.review_checks),
             decisions=tuple(state.decisions),
+            validations=tuple(state.validations),
             run_opinion=state.run_opinion,
             review=state.review,
             fallbacks=tuple(state.fallbacks),

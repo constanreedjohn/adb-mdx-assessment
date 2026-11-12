@@ -23,9 +23,12 @@ from mdx_assessment.core.domain.review import (
     Decision,
     DecisionKind,
     DecisionSource,
+    ItemDecision,
+    ItemDecisionKind,
     Reliability,
     ReviewCheckResult,
     RunReview,
+    StepValidation,
 )
 from mdx_assessment.core.domain.run_context import Fact, RunContext, RunObservation
 from mdx_assessment.core.domain.session import SessionResult, SessionStatus, TraceRef, Versions
@@ -42,6 +45,8 @@ __all__ = [
     "EvidenceId",
     "Fact",
     "Finding",
+    "ItemDecision",
+    "ItemDecisionKind",
     "Measure",
     "NewAuditEvent",
     "Plan",
@@ -56,6 +61,7 @@ __all__ = [
     "SessionResult",
     "SessionStatus",
     "Severity",
+    "StepValidation",
     "Task",
     "TaskStatus",
     "TraceRef",

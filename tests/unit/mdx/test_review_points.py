@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.memory import InMemorySaver
-from tests.support import explain_from_inputs, investigate_from_inputs
+from tests.support import accept_all, explain_from_inputs, investigate_from_inputs
 
 from mdx_assessment.app import build_registries, load_config
 from mdx_assessment.core.api import create_app
@@ -111,6 +111,7 @@ class Session:
                 "master_plan": plan,
                 "mda_explain": explain_from_inputs,
                 "mda_investigate": investigate_from_inputs,
+                "master_validate": accept_all,
                 **script,
             }
         )
