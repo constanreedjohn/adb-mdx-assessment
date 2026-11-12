@@ -43,10 +43,13 @@ from mdx_assessment.core.config import LoadedConfig
 from mdx_assessment.core.domain import (
     Decision,
     DecisionKind,
+    DecisionSource,
     NewAuditEvent,
     Plan,
+    Reliability,
     ReviewCheckResult,
     RunContext,
+    RunReview,
     SessionStatus,
     TaskStatus,
 )
@@ -55,6 +58,7 @@ from mdx_assessment.core.observability.tracing import Tracer
 from mdx_assessment.core.orchestration.playbooks import ResolvedPlaybook
 from mdx_assessment.core.orchestration.state import ExecutionEntry, RunState
 from mdx_assessment.core.orchestration.tasks import (
+    USED_FALLBACK,
     ReviewCheckRegistry,
     TaskContext,
     TaskInput,
@@ -115,16 +119,68 @@ async def _no_playbook(state: RunState) -> ResolvedPlaybook | None:
     return None
 
 
+RAN = (TaskStatus.DONE, TaskStatus.DONE_WITH_FALLBACK)
+
+
+def _blocked_by(state: RunState, depends_on: tuple[str, ...]) -> str | None:
+    """Why a step can't run: the latest run of a task it depends on failed or was skipped."""
+    for task in depends_on:
+        latest = next((e for e in reversed(state.execution) if e.task == task), None)
+        if latest is not None and latest.status not in RAN:
+            return f"skipped: it needs step {latest.step_id!r}, which {latest.status.value}"
+    return None
+
+
 async def accept_unless_failed(
     state: RunState, entry: ExecutionEntry, checks: list[ReviewCheckResult]
 ) -> Decision:
-    """Stand-in decide step until the Master's review (E10-01): accept, or flag a failure."""
+    """Code-only decide step (no LLM): accept, or flag a failure. The Master's review
+    (`core.master.review`) replaces it in sessions."""
     failed_checks = [c.check_id for c in checks if not c.passed]
-    if entry.status is TaskStatus.FAILED or failed_checks:
+    if entry.status not in RAN or failed_checks:
         reason = entry.error or f"checks failed: {', '.join(failed_checks)}"
         return Decision(step_id=entry.step_id, kind=DecisionKind.FLAG_FOR_HUMAN, reason=reason)
     return Decision(
         step_id=entry.step_id, kind=DecisionKind.ACCEPT, reason="step done, checks passed"
+    )
+
+
+def run_review(state: RunState) -> RunReview:
+    """The simple reliability rule (E10-01, see `RunReview`). Pure: code only."""
+    flagged = tuple(
+        dict.fromkeys(d.step_id for d in state.decisions if d.kind is DecisionKind.FLAG_FOR_HUMAN)
+    )
+    not_run = [e.step_id for e in state.execution if e.status not in RAN]
+    templated = [e.step_id for e in state.execution if e.status is TaskStatus.DONE_WITH_FALLBACK]
+    failed_checks = sorted(
+        {f"{c.step_id}:{c.check_id}" for c in state.review_checks if not c.passed}
+    )
+    overridden = [
+        d.step_id
+        for d in state.decisions
+        if d.source is DecisionSource.LLM_REVIEW and d.kind is DecisionKind.ACCEPT
+    ]
+    used_default = bool(
+        state.plan and state.plan.validation and state.plan.validation.fallback_reason
+    )
+    low = [f"step {s!r} did not run" for s in not_run]
+    low += [f"step {s!r} needs a human" for s in flagged if s not in not_run]
+    medium = ["the playbook's default plan ran"] if used_default else []
+    medium += [f"step {s!r} used a template fallback" for s in templated]
+    medium += [f"step {s!r} was accepted despite a failed check" for s in overridden]
+    if low:
+        reliability, reasons = Reliability.LOW, low + medium
+    elif medium:
+        reliability, reasons = Reliability.MEDIUM, medium
+    else:
+        reliability, reasons = Reliability.HIGH, ["every step done, every check passed"]
+    if failed_checks:
+        reasons.append(f"failed checks: {', '.join(failed_checks)}")
+    return RunReview(
+        reliability=reliability,
+        reasons=tuple(reasons),
+        human_review_required=flagged,
+        llm_reviews=sum(d.source is DecisionSource.LLM_REVIEW for d in state.decisions),
     )
 
 
@@ -253,9 +309,13 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
         started_at, started = runtime.clock(), time.perf_counter()
         status, error, result = TaskStatus.DONE, None, None
         definition = runtime.tasks.get(step.task)
+        blocked = _blocked_by(state, definition.depends_on) if definition else None
         if definition is None:
             status, error = TaskStatus.FAILED, f"unknown task {step.task!r}"
             logger.error("session %s step %s failed: %s", state.session_id, step.step_id, error)
+        elif blocked is not None:
+            status, error = TaskStatus.SKIPPED, blocked
+            logger.warning("session %s step %s %s", state.session_id, step.step_id, blocked)
         else:
             context = TaskContext(
                 inputs=TaskInput(
@@ -287,6 +347,8 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
                 result = definition.output_model.model_validate(output.model_dump()).model_dump(
                     mode="json"
                 )
+                if getattr(output, USED_FALLBACK, False) is True:
+                    status = TaskStatus.DONE_WITH_FALLBACK
             except ValidationError as exc:
                 fields = "; ".join(
                     f"{'.'.join(map(str, e['loc'])) or '(output)'}: {e['msg']}"
@@ -334,8 +396,12 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
     async def review_point(state: RunState) -> dict[str, Any]:
         entry = state.execution[-1]
         definition = runtime.tasks.get(entry.task)
-        check_ids = definition.review_checks if definition else ()
-        results = [runtime.checks.get(c).check(state, entry) for c in check_ids]
+        # Checks inspect a step's output, so only a step that ran has any to check.
+        check_ids = definition.review_checks if definition and entry.status in RAN else ()
+        results = [
+            runtime.checks.get(c).check(state, entry).model_copy(update={"step_id": entry.step_id})
+            for c in check_ids
+        ]
         decision = await hooks.decide(state, entry, results)
         await runtime.record(
             state,
@@ -344,6 +410,7 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
             {
                 "step_id": entry.step_id,
                 "kind": decision.kind.value,
+                "source": decision.source.value,
                 "reason": decision.reason,
                 "checks": {r.check_id: r.passed for r in results},
             },
@@ -352,22 +419,29 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
 
     async def master_synthesize(state: RunState) -> dict[str, Any]:
         failed = [e.step_id for e in state.execution if e.status is TaskStatus.FAILED]
-        used_default = bool(
-            state.plan and state.plan.validation and state.plan.validation.fallback_reason
-        )
-        update: dict[str, Any] = {"run_opinion": await hooks.synthesize(state)}
-        if failed:
-            update["fallbacks"] = [f"step_failed:{s}" for s in failed]
-        if used_default:
-            update["status"] = SessionStatus.DEFAULT_COMPLETE
-        elif failed:
-            update["status"] = SessionStatus.COMPLETED_DEGRADED
-        else:
-            update["status"] = SessionStatus.COMPLETED
+        skipped = [e.step_id for e in state.execution if e.status is TaskStatus.SKIPPED]
+        templated = [
+            e.step_id for e in state.execution if e.status is TaskStatus.DONE_WITH_FALLBACK
+        ]
+        review = run_review(state)
+        update: dict[str, Any] = {"run_opinion": await hooks.synthesize(state), "review": review}
+        fallbacks = [f"step_failed:{s}" for s in failed]
+        fallbacks += [f"step_skipped:{s}" for s in skipped]
+        fallbacks += [f"step_template:{s}" for s in templated]
+        if fallbacks:
+            update["fallbacks"] = fallbacks
+        # The run reached its end, so it succeeded (team ADR-0001); how well it went is
+        # carried by the plan source, the step statuses and the review, not the status.
+        update["status"] = SessionStatus.SUCCEEDED
         payload: dict[str, JsonValue] = {
             "status": update["status"].value,
+            "plan_source": state.plan.source.value if state.plan else None,
             "steps": len(state.execution),
-            "failed": [step_id for step_id in failed],
+            "failed": [s for s in failed],
+            "skipped": [s for s in skipped],
+            "templated": [s for s in templated],
+            "reliability": review.reliability.value,
+            "human_review_required": list(review.human_review_required),
         }
         await runtime.record(state, MASTER_AGENT, "session_completed", payload)
         return update

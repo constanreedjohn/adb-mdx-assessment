@@ -15,6 +15,8 @@ from mdx_assessment.core.domain.planning import PlanStep
 class ReviewCheckResult(DomainModel):
     """Outcome of one deterministic check at a review point, e.g. C-1 flag reconciliation."""
 
+    step_id: NonEmptyStr | None = None
+    """The review point's step; set by the review point."""
     check_id: NonEmptyStr
     name: NonEmptyStr
     passed: bool
@@ -28,12 +30,19 @@ class DecisionKind(StrEnum):
     FLAG_FOR_HUMAN = "flag_for_human"
 
 
+class DecisionSource(StrEnum):
+    RULE = "rule"  # code decided: every check passed, or the step failed or was skipped
+    LLM_REVIEW = "llm_review"  # a check failed and the Master's LLM review decided
+    RULE_FALLBACK = "rule_fallback"  # a check failed, the LLM review wasn't usable: flagged
+
+
 class Decision(DomainModel):
     """What the Master Agent decides after a review point. Advisory: never a final business decision."""
 
     step_id: NonEmptyStr
     kind: DecisionKind
     reason: NonEmptyStr
+    source: DecisionSource = DecisionSource.RULE
     follow_up: PlanStep | None = None
     evidence_ids: tuple[EvidenceId, ...] = ()
 
@@ -44,3 +53,26 @@ class Decision(DomainModel):
         if self.kind is not DecisionKind.FOLLOW_UP and self.follow_up is not None:
             raise ValueError(f"a {self.kind} decision must not carry a follow-up step")
         return self
+
+
+class Reliability(StrEnum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class RunReview(DomainModel):
+    """The run as a whole, after the last review point (simple rule, E10-01; E10-06 refines).
+
+    - `low`: a step failed or was skipped, or a review point flagged a step for a human.
+    - `medium`: otherwise, if the default plan ran, a step used a template fallback, or a
+      check failed and the Master's review accepted the step anyway.
+    - `high`: every step done, every check passed, every decision accept.
+    """
+
+    reliability: Reliability
+    reasons: tuple[str, ...] = ()
+    human_review_required: tuple[str, ...] = ()
+    """Step IDs a review point flagged for a human."""
+    llm_reviews: int = 0
+    """Review points that needed the Master's LLM review (option C)."""

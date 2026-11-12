@@ -84,11 +84,13 @@ def test_finding_rejects_malformed_evidence_id() -> None:
         Finding(finding_id="f1", kind="k", subject="s", summary="s", evidence_ids=("ev-xyz",))
 
 
-@pytest.mark.parametrize(
-    "status", [SessionStatus.COMPLETED_DEGRADED, SessionStatus.DEFAULT_COMPLETE]
-)
-def test_fallback_statuses_must_list_fallbacks(status: SessionStatus) -> None:
-    with pytest.raises(ValidationError, match="fallbacks"):
+def test_the_session_status_is_the_teams_run_lifecycle() -> None:
+    assert [s.value for s in SessionStatus] == ["pending", "running", "succeeded", "failed"]
+
+
+@pytest.mark.parametrize("status", [SessionStatus.PENDING, SessionStatus.RUNNING])
+def test_an_unfinished_session_has_no_finished_at(status: SessionStatus) -> None:
+    with pytest.raises(ValidationError, match="has no finished_at"):
         SessionResult(
             session_id="x",
             business_date=date(2026, 10, 15),
@@ -96,6 +98,19 @@ def test_fallback_statuses_must_list_fallbacks(status: SessionStatus) -> None:
             status=status,
             started_at=T0,
             finished_at=T0,
+        )
+
+
+def test_a_succeeded_session_on_the_default_plan_must_list_its_fallbacks() -> None:
+    with pytest.raises(ValidationError, match="must list it"):
+        SessionResult(
+            session_id="x",
+            business_date=date(2026, 10, 15),
+            data_type="linear",
+            status=SessionStatus.SUCCEEDED,
+            started_at=T0,
+            finished_at=T0,
+            plan=Plan(source=PlanSource.DEFAULT, steps=(STEP,)),
         )
 
 

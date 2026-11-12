@@ -149,7 +149,7 @@ async def test_three_steps_run_in_order_and_are_logged() -> None:
         "s3": {"n": 3},
     }  # each saw the last
     assert [d.kind for d in final.decisions] == [DecisionKind.ACCEPT] * 3
-    assert final.status is SessionStatus.COMPLETED
+    assert final.status is SessionStatus.SUCCEEDED
     assert final.next_step == 3
     assert [e.event_type for e in audit.read()] == [
         "run_context",
@@ -183,7 +183,7 @@ async def test_a_failed_step_is_flagged_and_the_run_completes(bad_task: str, err
     assert error in (final.execution[1].error or "")
     assert final.decisions[1].kind is DecisionKind.FLAG_FOR_HUMAN
     assert "s2" not in final.agent_results
-    assert final.status is SessionStatus.COMPLETED_DEGRADED
+    assert final.status is SessionStatus.SUCCEEDED
     assert final.fallbacks == ["step_failed:s2"]
 
 
@@ -261,7 +261,7 @@ async def test_an_empty_plan_goes_straight_to_synthesis() -> None:
         Plan.model_construct(source=PlanSource.DEFAULT, steps=(), follow_ups=())
     )
     assert final.execution == []
-    assert final.status is SessionStatus.COMPLETED
+    assert final.status is SessionStatus.SUCCEEDED
     assert [e.event_type for e in audit.read()] == ["run_context", "plan", "session_completed"]
 
 

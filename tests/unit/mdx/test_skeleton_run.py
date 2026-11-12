@@ -99,7 +99,7 @@ async def test_three_stub_steps_run_end_to_end(
         ("record_cases", "done"),
     ]
     assert [d.kind for d in final.decisions] == [DecisionKind.ACCEPT] * 3
-    assert final.status is SessionStatus.COMPLETED
+    assert final.status is SessionStatus.SUCCEEDED
 
 
 async def test_input_validation_reads_real_mdx_data(

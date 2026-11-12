@@ -28,9 +28,11 @@ from mdx_assessment.core.domain import (
     PlanSource,
     PlanStep,
     PlanValidation,
+    Reliability,
     ReviewCheckResult,
     RunContext,
     RunObservation,
+    RunReview,
     SessionResult,
     SessionStatus,
     Severity,
@@ -125,6 +127,12 @@ OBSERVATION = RunObservation(
 )
 
 SAMPLES: list[BaseModel] = [
+    RunReview(
+        reliability=Reliability.LOW,
+        reasons=("step 'assess_movements' needs a human",),
+        human_review_required=("assess_movements",),
+        llm_reviews=1,
+    ),
     FACT,
     OBSERVATION,
     RunContext(facts=(FACT,), observations=(OBSERVATION,)),
@@ -155,7 +163,7 @@ SAMPLES: list[BaseModel] = [
         session_id="sess-1",
         business_date=D,
         data_type="linear",
-        status=SessionStatus.COMPLETED_DEGRADED,
+        status=SessionStatus.SUCCEEDED,
         started_at=T0,
         finished_at=T1,
         versions=Versions(config="sha256:abc"),

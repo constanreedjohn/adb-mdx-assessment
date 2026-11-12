@@ -85,6 +85,14 @@ class TaskDefinition:
     budget: TaskBudget = field(default_factory=TaskBudget)
     prompts: tuple[tuple[str, str], ...] = ()
     """(prompt ID, version) pairs the task may call, recorded with every session."""
+    depends_on: tuple[str, ...] = ()
+    """Task IDs whose output this task needs. If the latest run of one failed or was
+    skipped, the dispatcher skips this task instead of running it on missing input."""
+
+
+USED_FALLBACK = "used_fallback"
+"""A task's output may carry `used_fallback: bool`. True marks the step
+`done_with_fallback`: done, but part of it is a code template instead of the LLM's output."""
 
 
 @dataclass(frozen=True)

@@ -43,6 +43,12 @@ from mdx_assessment.usecases.mdx.agents.market_data import (
     MarketAssessmentResult,
     near_zero_check,
 )
+from mdx_assessment.usecases.mdx.checks.review import (
+    CHECKS,
+    DATASET_COMPLETENESS,
+    FLAG_NORMALIZATION,
+    FLAG_RECONCILIATION,
+)
 
 __all__ = [
     "AGENTS",
@@ -97,6 +103,7 @@ TASKS = (
         output_model=IntakeResult,
         handler=check_files_and_intake,
         budget=TaskBudget(max_calls=10, max_seconds=30),
+        review_checks=(DATASET_COMPLETENESS, FLAG_NORMALIZATION),
     ),
     TaskDefinition(
         id=NEAR_ZERO_CHECK,
@@ -108,6 +115,8 @@ TASKS = (
         handler=near_zero_check,
         budget=TaskBudget(max_calls=60, max_seconds=120),  # one history call per flag
         prompts=((EXPLAIN_PROMPT_ID, EXPLAIN_PROMPT_VERSION),),
+        review_checks=(FLAG_RECONCILIATION,),
+        depends_on=(CHECK_FILES_AND_INTAKE,),
     ),
     TaskDefinition(
         id=RECORD_CASES,
@@ -116,6 +125,7 @@ TASKS = (
         "(Skeleton stub: creates no cases.)",
         output_model=CasesStubResult,
         handler=record_cases,
+        depends_on=(NEAR_ZERO_CHECK,),
     ),
 )
 
@@ -125,3 +135,5 @@ def register_skeleton(registries: PlatformRegistries) -> None:
         registries.agents.register(agent)
     for task in TASKS:
         registries.tasks.register(task)
+    for check in CHECKS:
+        registries.checks.register(check)

@@ -92,11 +92,15 @@ def test_session_query_columns_are_filled(db: Session) -> None:
 def test_session_save_replaces_the_record(db: Session) -> None:
     repo = SessionRepo(db)
     repo.add(a_session())
-    finished = a_session(status=SessionStatus.COMPLETED, finished_at=T0 + timedelta(minutes=3))
+    finished = a_session(
+        status=SessionStatus.SUCCEEDED,
+        finished_at=T0 + timedelta(minutes=3),
+        fallbacks=("plan_default:llm_off",),
+    )
     repo.save(finished)
     db.expire_all()
     assert repo.get("sess-1") == finished
-    assert db.scalars(select(SessionRow.status)).one() == "completed"
+    assert db.scalars(select(SessionRow.status)).one() == "succeeded"
 
 
 def test_missing_session(db: Session) -> None:

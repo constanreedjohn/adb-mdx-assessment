@@ -31,6 +31,9 @@ from mdx_assessment.core.domain import (
 from mdx_assessment.core.gateway import LLMGateway, create_llm_gateway
 from mdx_assessment.core.gateway.grounding import GUARDRAILS_PATH, GuardrailsConfig
 from mdx_assessment.core.master.planning import PROMPT_ID, PROMPT_VERSION, master_plan_hook
+from mdx_assessment.core.master.review import PROMPT_ID as REVIEW_PROMPT_ID
+from mdx_assessment.core.master.review import PROMPT_VERSION as REVIEW_PROMPT_VERSION
+from mdx_assessment.core.master.review import master_review_hook
 from mdx_assessment.core.observability.tracing import TraceHandle, Tracer, build_tracer
 from mdx_assessment.core.orchestration.checkpoint import thread_config
 from mdx_assessment.core.orchestration.graph import GraphHooks, SessionRuntime, build_session_graph
@@ -92,7 +95,7 @@ class SessionService:
         """Run a session to its end (synchronously for now) and return the stored result."""
         session_id = f"sess-{uuid.uuid4().hex[:12]}"
         started_at = datetime.now(UTC)
-        prompts = {PROMPT_ID: PROMPT_VERSION}
+        prompts = {PROMPT_ID: PROMPT_VERSION, REVIEW_PROMPT_ID: REVIEW_PROMPT_VERSION}
         prompts.update(p for task in self._registries.tasks for p in task.prompts)
         versions = Versions(config=self._config.version, prompts=prompts)
         initial = RunState(
@@ -182,10 +185,10 @@ class SessionService:
                 tracer=tracer,
                 config=self._config,
             )
+            tolerance = self._config.get(GUARDRAILS_PATH, GuardrailsConfig).number_matching
             hooks = GraphHooks(
-                plan=master_plan_hook(
-                    runtime, self._config.get(GUARDRAILS_PATH, GuardrailsConfig).number_matching
-                ),
+                plan=master_plan_hook(runtime, tolerance),
+                decide=master_review_hook(runtime, tolerance),
                 gather_context=context_hook(registries.facts, hub, self._config),
                 select_playbook=playbook_hook(PlaybookStore.from_config(self._config)),
             )
@@ -238,6 +241,7 @@ class SessionService:
             review_checks=tuple(state.review_checks),
             decisions=tuple(state.decisions),
             run_opinion=state.run_opinion,
+            review=state.review,
             fallbacks=tuple(state.fallbacks),
             analyst_notice=state.analyst_notice,
             trace=TraceRef(mlflow_trace_id=trace.trace_id, url=trace.url)

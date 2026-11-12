@@ -1,0 +1,24 @@
+Here are the list of manual steps the Analyst has to made for a daily run.
+
+- Check the vendor file has come in through the Status screen
+- The number of data points within the vendor file exceed no more than 5% comparing to the last upload.
+- See all of the problems in the Rate Validation screen that MDX’s validation rule has flagged.
+- Check the Calendar to see the dates
+- Compare all flags from yesterday upload to todays flags.
+- In case of file submit late, note it down or contact the vendor.
+- Analyst goes to Rate Validation screen and starts to investigate each flags:
+  - Stale data:
+    - Check the data from previous day that MDX flag for ‘data is potentially stale’
+    - Check the Calendar or the date range.
+    - Also check for history data across dates in the “Curve Input Rate” chart.
+    - Analyst decision: Quick check or Need review the stale window.
+  - Large Data Move:
+    - Check for near-zero threshold
+    - Convert value in to bps
+    - Check for Isolated Spike in the bps curve with yesterday and today data.
+    - With static calculation from MDX’s logic: Move % = Move ÷ giá hôm trước (PDF)
+    - Flag condition: Move % is above 25%
+    - Analyst classify: threshold artfact or likely data issue or genuine market move
+  - Extreme Data Move
+  - Data Missing
+- Check Materiality priority based on Mapping screen, tab PriorityCCY.

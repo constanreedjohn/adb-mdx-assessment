@@ -54,12 +54,23 @@ The interactive API docs are at <http://127.0.0.1:8000/docs>.
 
 ### Session status
 
+The status says only whether the run finished. It uses the same four values as the team's run requests (adb-mdx-agent ADR-0001).
+
 | Status | Meaning |
 | --- | --- |
-| `completed` | The Master Agent's plan passed validation and every step ran |
-| `completed_degraded` | The Master Agent's plan was used, but at least one step failed |
-| `default_complete` | The playbook's default plan ran instead of the Master Agent's: the plan was rejected twice, the model could not be reached, there were no facts to plan from, or the run was started with `"llm_enabled": false`. `analyst_notice` says which |
+| `pending` | Queued and not started yet. Not used for now: `POST /sessions` runs the session before it returns |
+| `running` | The run has started and not finished |
+| `succeeded` | The run reached its end. Some steps may still have failed, been skipped or used a template: see below |
 | `failed` | The run stopped because the day's facts could not be read from the source system. No checks ran. `analyst_notice` says so, and the log has the full reason |
+
+How well a `succeeded` run went is in the result, not in the status:
+
+| Field | What it tells you |
+| --- | --- |
+| `plan.source` | `master` when the Master Agent's plan passed validation; `default` when the playbook's default plan ran instead. The plan was rejected twice, the model could not be reached, there were no facts to plan from, or the run was started with `"llm_enabled": false`. `analyst_notice` says which |
+| `execution[].status` | Each step: `done`, `done_with_fallback` (a template replaced the LLM's text), `failed`, or `skipped` (a step it depends on did not run) |
+| `review.reliability` | `high`, `medium` or `low`, with the reasons and the steps that need human review |
+| `fallbacks` | Every fallback the run used, for example `plan_default:llm_off` or `step_failed:<step_id>` |
 
 ### Stop or reset
 

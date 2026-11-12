@@ -26,6 +26,7 @@ from mdx_assessment.core.domain import (
     Plan,
     ReviewCheckResult,
     RunContext,
+    RunReview,
     SessionStatus,
     TaskStatus,
     Versions,
@@ -87,6 +88,8 @@ class RunState(BaseModel):
     decisions: Annotated[list[Decision], operator.add] = Field(default_factory=list)
     run_opinion: dict[str, JsonValue] | None = None
     """The Master Agent's run opinion (typed in E10-02)."""
+    review: RunReview | None = None
+    """The run's reliability and what needs a human, set at the end (E10-01)."""
 
     status: SessionStatus = SessionStatus.RUNNING
     analyst_notice: str | None = None

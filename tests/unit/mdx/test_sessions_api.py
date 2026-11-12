@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.memory import InMemorySaver
-from tests.support import CapturedTraces
+from tests.support import CapturedTraces, explain_from_inputs
 
 from mdx_assessment.app import build_registries, load_config
 from mdx_assessment.core.api import create_app
@@ -82,7 +82,7 @@ def client_for(
     def make_gateway(trail: AuditTrail, active: Tracer) -> LLMGateway:
         if isinstance(script, Exception):
             raise script
-        fake = FakeProvider({"master_plan": script})
+        fake = FakeProvider({"master_plan": script, "mda_explain": explain_from_inputs})
         return create_llm_gateway(trail, active, settings, fake)
 
     service = SessionService(
@@ -111,10 +111,10 @@ def client(config: LoadedConfig, settings: Settings) -> TestClient:
 def test_post_then_get_on_the_simulated_day(client: TestClient, config: LoadedConfig) -> None:
     started = client.post("/sessions", json=BODY)
     assert started.status_code == 201
-    assert started.json()["status"] == "completed"
+    assert started.json()["status"] == "succeeded"
 
     session = client.get(f"/sessions/{started.json()['session_id']}").json()
-    assert session["status"] == "completed"
+    assert session["status"] == "succeeded"
     assert session["finished_at"] is not None
     facts = {f["id"]: f["value"] for f in session["run_context"]["facts"]}
     assert facts["fact-flag-count"] == 28
@@ -127,7 +127,7 @@ def test_post_then_get_on_the_simulated_day(client: TestClient, config: LoadedCo
     assert session["agent_results"]["s0"]["flags_read"] == 28
     assert session["versions"] == {
         "config": config.version,
-        "prompts": {"master_plan": "v1", "mda_explain": "v1"},
+        "prompts": {"master_plan": "v1", "master_review": "v1", "mda_explain": "v1"},
         "llm_deployment": "fake",
         "ml_model": None,
     }
@@ -140,7 +140,7 @@ def test_a_rejected_plan_shows_the_marked_default_plan(
     client = client_for(config, settings, {**valid_plan(config), "steps": []})
     session_id = client.post("/sessions", json=BODY).json()["session_id"]
     session = client.get(f"/sessions/{session_id}").json()
-    assert session["status"] == "default_complete"
+    assert session["status"] == "succeeded"
     assert session["plan"]["source"] == "default"
     assert session["fallbacks"] == ["plan_default:plan_invalid"]
 
@@ -150,7 +150,7 @@ def test_an_unavailable_model_still_completes_on_the_default_plan(
 ) -> None:
     client = client_for(config, settings, down)
     started = client.post("/sessions", json=BODY).json()
-    assert started["status"] == "default_complete"
+    assert started["status"] == "succeeded"
     assert "developer" in started["analyst_notice"]
     session = client.get(f"/sessions/{started['session_id']}").json()
     assert session["plan"]["source"] == "default"
@@ -161,7 +161,7 @@ def test_an_unavailable_model_still_completes_on_the_default_plan(
 
 class ClosingProvider(FakeProvider):
     def __init__(self, script: Any) -> None:
-        super().__init__({"master_plan": script})
+        super().__init__({"master_plan": script, "mda_explain": explain_from_inputs})
         self.closed = False
 
     async def aclose(self) -> None:
@@ -198,7 +198,7 @@ def test_with_the_llm_off_a_run_needs_no_gateway(config: LoadedConfig, settings:
     # This gateway factory raises if it is called, so a completed run proves it wasn't.
     client = client_for(config, settings, RuntimeError("no model credentials"))
     started = client.post("/sessions", json={**BODY, "llm_enabled": False}).json()
-    assert started["status"] == "default_complete"
+    assert started["status"] == "succeeded"
     assert "turned off" in started["analyst_notice"]
     session = client.get(f"/sessions/{started['session_id']}").json()
     assert session["llm_enabled"] is False

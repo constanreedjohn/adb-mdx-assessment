@@ -19,7 +19,7 @@ TABLES = {"sessions", "cases", "audit_events"}
 
 
 def test_database_is_at_head(migrated_engine: Engine) -> None:
-    assert current_revision(migrated_engine) == head_revision() == "0003"
+    assert current_revision(migrated_engine) == head_revision() == "0004"
     assert set(inspect(migrated_engine).get_table_names()) >= TABLES
 
 
@@ -57,5 +57,26 @@ def test_downgrade_and_upgrade_again(migrated_engine: Engine) -> None:
     downgrade(migrated_engine, "base")
     assert not TABLES & set(inspect(migrated_engine).get_table_names())
     upgrade(migrated_engine)
-    assert current_revision(migrated_engine) == "0003"
+    assert current_revision(migrated_engine) == "0004"
     assert set(inspect(migrated_engine).get_table_names()) >= TABLES
+
+
+def test_old_session_statuses_become_succeeded(migrated_engine: Engine) -> None:
+    downgrade(migrated_engine, "0003")
+    old = ("completed", "completed_degraded", "default_complete", "failed")
+    with migrated_engine.begin() as conn:
+        for i, status in enumerate(old):
+            conn.execute(
+                text(
+                    "INSERT INTO sessions (id, business_date, data_type, status, started_at, result)"
+                    " VALUES (:id, '2026-10-15', 'linear', :s, now(),"
+                    " jsonb_build_object('status', CAST(:s AS varchar)))"
+                ),
+                {"id": f"sess-{i}", "s": status},
+            )
+    upgrade(migrated_engine)
+    with migrated_engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT status, result->>'status' FROM sessions ORDER BY id")
+        ).all()
+    assert [tuple(r) for r in rows] == [("succeeded", "succeeded")] * 3 + [("failed", "failed")]

@@ -17,17 +17,22 @@ from pydantic import AwareDatetime, Field, JsonValue, model_validator
 from mdx_assessment.core.domain.base import DomainModel
 from mdx_assessment.core.domain.evidence import NonEmptyStr
 from mdx_assessment.core.domain.findings import Finding
-from mdx_assessment.core.domain.planning import Plan, Task
-from mdx_assessment.core.domain.review import Decision, ReviewCheckResult
+from mdx_assessment.core.domain.planning import Plan, PlanSource, Task, TaskStatus
+from mdx_assessment.core.domain.review import Decision, ReviewCheckResult, RunReview
 from mdx_assessment.core.domain.run_context import RunContext
 
 
 class SessionStatus(StrEnum):
+    """The run's lifecycle, as the team's `run_requests` status (adb-mdx-agent ADR-0001).
+
+    It says only whether the run finished. How well it went is elsewhere: the plan's
+    `source`, each step's `TaskStatus`, `review.reliability` and `fallbacks`.
+    """
+
+    PENDING = "pending"  # queued, not claimed yet (unused while the api runs sessions inline)
     RUNNING = "running"
-    COMPLETED = "completed"
-    COMPLETED_DEGRADED = "completed_degraded"  # completed with a fallback (plan §3.3)
-    DEFAULT_COMPLETE = "default_complete"  # the default plan ran instead of a Master plan
-    FAILED = "failed"
+    SUCCEEDED = "succeeded"  # the run reached its end, whatever its steps' statuses
+    FAILED = "failed"  # the run stopped before its end
 
 
 class Versions(DomainModel):
@@ -62,6 +67,7 @@ class SessionResult(DomainModel):
     decisions: tuple[Decision, ...] = ()
     findings: tuple[Finding, ...] = ()
     run_opinion: dict[str, JsonValue] | None = None
+    review: RunReview | None = None
     fallbacks: tuple[str, ...] = ()
     analyst_notice: str | None = None
     trace: TraceRef | None = None
@@ -70,9 +76,13 @@ class SessionResult(DomainModel):
     def _consistent(self) -> Self:
         if self.finished_at and self.finished_at < self.started_at:
             raise ValueError("finished_at is before started_at")
-        if self.status is SessionStatus.RUNNING and self.finished_at is not None:
-            raise ValueError("a running session has no finished_at")
-        fallback_statuses = (SessionStatus.COMPLETED_DEGRADED, SessionStatus.DEFAULT_COMPLETE)
-        if self.status in fallback_statuses and not self.fallbacks:
-            raise ValueError(f"a {self.status} session must list the fallbacks it used")
+        unfinished = (SessionStatus.PENDING, SessionStatus.RUNNING)
+        if self.status in unfinished and self.finished_at is not None:
+            raise ValueError(f"a {self.status} session has no finished_at")
+        degraded = any(
+            t.status in (TaskStatus.FAILED, TaskStatus.SKIPPED, TaskStatus.DONE_WITH_FALLBACK)
+            for t in self.execution
+        ) or (self.plan is not None and self.plan.source is PlanSource.DEFAULT)
+        if self.status is SessionStatus.SUCCEEDED and degraded and not self.fallbacks:
+            raise ValueError("a session that used the default plan or a fallback must list it")
         return self

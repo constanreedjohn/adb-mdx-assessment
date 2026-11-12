@@ -25,6 +25,8 @@ from mdx_assessment.core.domain import Evidence, Finding, Measure
 from mdx_assessment.core.gateway.grounding import GUARDRAILS_PATH, GuardrailsConfig
 from mdx_assessment.core.orchestration.tasks import TaskContext
 from mdx_assessment.usecases.mdx.agents.explanations import (
+    FALLBACK_REJECTED,
+    FALLBACK_UNAVAILABLE,
     Explanation,
     ItemToExplain,
     explain,
@@ -71,6 +73,9 @@ class MarketAssessmentResult(BaseModel):
     """The records this step added; flags and points are the intake step's."""
     not_assessed: tuple[str, ...] = ()
     """Flag IDs the intake step couldn't normalize, carried for reconciliation (C-1)."""
+    used_fallback: bool = False
+    """True when the LLM's explanations weren't usable and templates replaced them: the
+    step is then `done_with_fallback`. Templates by design (LLM off, over the limit) aren't."""
 
 
 def _summary(a: NearZeroAssessment, unit: str) -> str:
@@ -248,4 +253,8 @@ async def near_zero_check(ctx: TaskContext) -> MarketAssessmentResult:
         explanation_rejections=outcome.rejections,
         evidence=tuple({e.evidence_id: e for e in added}.values()),
         not_assessed=tuple(i.flag_id for i in intake.flag_issues),
+        used_fallback=any(
+            i.explanation.fallback_reason in (FALLBACK_REJECTED, FALLBACK_UNAVAILABLE)
+            for i in items
+        ),
     )

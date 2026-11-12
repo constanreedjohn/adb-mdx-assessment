@@ -56,7 +56,11 @@ class TaskStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     DONE = "done"
+    DONE_WITH_FALLBACK = "done_with_fallback"
+    """Done, but part of the output is a code template because the LLM's wasn't usable."""
     FAILED = "failed"
+    SKIPPED = "skipped"
+    """Not run: a step it depends on failed or was skipped."""
 
 
 class Task(DomainModel):

@@ -433,16 +433,16 @@ async def test_the_validated_plan_drives_the_run(tmp_path: Path) -> None:
     assert final.plan is not None and final.plan.source is PlanSource.MASTER
     assert [e.task for e in final.execution] == [FIRST, SECOND]
     assert final.fallbacks == []
-    assert final.status is SessionStatus.COMPLETED
+    assert final.status is SessionStatus.SUCCEEDED
 
 
-async def test_the_default_plan_ends_as_default_complete(tmp_path: Path) -> None:
+async def test_the_default_plan_still_succeeds(tmp_path: Path) -> None:
     harness = Harness(tmp_path, reply(steps=[step(FIRST)]))
     final = await run_graph(harness)
     assert final.plan is not None and final.plan.source is PlanSource.DEFAULT
     assert [e.step_id for e in final.execution] == ["default_1", "default_2"]
     assert final.fallbacks == ["plan_default:plan_invalid"]
-    assert final.status is SessionStatus.DEFAULT_COMPLETE
+    assert final.status is SessionStatus.SUCCEEDED
     assert final.analyst_notice is not None and "usable plan" in final.analyst_notice
     assert harness.events("plan")[0]["source"] == "default"
     assert harness.events("plan")[0]["fallback_reason"] == "plan_invalid"
@@ -457,7 +457,7 @@ async def test_a_failed_step_on_the_default_plan_is_still_listed(tmp_path: Path)
     )
     harness = Harness(tmp_path, reply(steps=[step(FIRST)]), book)
     final = await run_graph(harness)
-    assert final.status is SessionStatus.DEFAULT_COMPLETE
+    assert final.status is SessionStatus.SUCCEEDED
     assert final.fallbacks == ["plan_default:plan_invalid", "step_failed:default_1"]
 
 
@@ -467,7 +467,7 @@ async def test_an_unavailable_model_runs_the_default_plan_and_tells_the_analyst(
     harness = Harness(tmp_path, down)
     with caplog.at_level(logging.ERROR, logger="mdx_assessment.core.master.planning"):
         final = await run_graph(harness)
-    assert final.status is SessionStatus.DEFAULT_COMPLETE
+    assert final.status is SessionStatus.SUCCEEDED
     assert final.fallbacks == ["plan_default:model_unavailable"]
     assert final.analyst_notice is not None and "developer" in final.analyst_notice
     assert "connection refused" not in final.analyst_notice

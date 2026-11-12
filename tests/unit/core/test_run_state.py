@@ -115,6 +115,10 @@ def test_allow_list_is_derived_from_the_state() -> None:
         "RuleOutcome",
         "PlaybookContent",
         "PlaybookLimits",
+        # E10-01: decision source and the run review
+        "DecisionSource",
+        "RunReview",
+        "Reliability",
     }
 
 
@@ -122,7 +126,7 @@ def test_allowed_classes_come_back_as_classes() -> None:
     serde = checkpoint_serializer()
     plan = initial().plan
     assert serde.loads_typed(serde.dumps_typed(plan)) == plan
-    assert isinstance(serde.loads_typed(serde.dumps_typed(SessionStatus.COMPLETED)), SessionStatus)
+    assert isinstance(serde.loads_typed(serde.dumps_typed(SessionStatus.SUCCEEDED)), SessionStatus)
 
 
 class Intruder(BaseModel):

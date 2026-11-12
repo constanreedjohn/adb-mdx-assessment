@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from sqlalchemy import URL, Engine, text
+from tests.support import explain_from_inputs
 
 from mdx_assessment.app import build_registries, load_config
 from mdx_assessment.core.api import create_app
@@ -56,7 +57,12 @@ def test_a_session_survives_in_postgres(
             yield saver
 
     def make_gateway(audit: AuditTrail, tracer: Tracer) -> LLMGateway:
-        return create_llm_gateway(audit, tracer, settings, FakeProvider({"master_plan": plan}))
+        return create_llm_gateway(
+            audit,
+            tracer,
+            settings,
+            FakeProvider({"master_plan": plan, "mda_explain": explain_from_inputs}),
+        )
 
     store = PostgresSessionStore(create_session_factory(migrated_engine))
     service = SessionService(
@@ -75,7 +81,7 @@ def test_a_session_survives_in_postgres(
     session_id = client.post("/sessions", json=body).json()["session_id"]
 
     stored = store.get(session_id)
-    assert stored is not None and stored.status.value == "completed"
+    assert stored is not None and stored.status.value == "succeeded"
     assert client.get(f"/sessions/{session_id}").json()["plan"]["source"] == "master"
     with migrated_engine.connect() as conn:
         status = conn.scalar(text("SELECT status FROM sessions WHERE id = :i"), {"i": session_id})
@@ -83,5 +89,5 @@ def test_a_session_survives_in_postgres(
             text("SELECT count(*) FROM langgraph.checkpoints WHERE thread_id = :i"),
             {"i": session_id},
         )
-    assert status == "completed"
+    assert status == "succeeded"
     assert checkpoints and checkpoints > 0

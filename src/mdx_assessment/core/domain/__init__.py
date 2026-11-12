@@ -19,7 +19,14 @@ from mdx_assessment.core.domain.planning import (
     Task,
     TaskStatus,
 )
-from mdx_assessment.core.domain.review import Decision, DecisionKind, ReviewCheckResult
+from mdx_assessment.core.domain.review import (
+    Decision,
+    DecisionKind,
+    DecisionSource,
+    Reliability,
+    ReviewCheckResult,
+    RunReview,
+)
 from mdx_assessment.core.domain.run_context import Fact, RunContext, RunObservation
 from mdx_assessment.core.domain.session import SessionResult, SessionStatus, TraceRef, Versions
 
@@ -29,6 +36,7 @@ __all__ = [
     "ChainVerification",
     "Decision",
     "DecisionKind",
+    "DecisionSource",
     "DomainModel",
     "Evidence",
     "EvidenceId",
@@ -40,9 +48,11 @@ __all__ = [
     "PlanSource",
     "PlanStep",
     "PlanValidation",
+    "Reliability",
     "ReviewCheckResult",
     "RunContext",
     "RunObservation",
+    "RunReview",
     "SessionResult",
     "SessionStatus",
     "Severity",
