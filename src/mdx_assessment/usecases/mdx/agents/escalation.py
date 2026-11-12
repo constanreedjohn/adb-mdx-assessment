@@ -27,6 +27,8 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from mdx_assessment.core.domain import DomainModel, ItemDecision, ItemDecisionKind, Measure
+from mdx_assessment.core.orchestration.graph import RAN
+from mdx_assessment.core.orchestration.state import RunState
 from mdx_assessment.core.orchestration.tasks import TaskContext
 from mdx_assessment.core.tools.cases import CREATE_CASE
 from mdx_assessment.core.tools.cases import TOOL_ID as CASES
@@ -176,17 +178,24 @@ class RecordCasesResult(BaseModel):
     report: RunReport
 
 
-def _latest_assessment(ctx: TaskContext) -> MarketAssessmentResult:
-    raw = ctx.result_of(NEAR_ZERO_CHECK)
+def latest_result(state: RunState, task_id: str) -> dict[str, JsonValue] | None:
+    """The latest result of a step that ran `task_id` (done, or done with a fallback)."""
+    for entry in reversed(state.execution):
+        if entry.task == task_id and entry.status in RAN:
+            return state.agent_results.get(entry.step_id)
+    return None
+
+
+def _latest_assessment(state: RunState) -> MarketAssessmentResult:
+    raw = latest_result(state, NEAR_ZERO_CHECK)
     if raw is None:
         raise ValueError("recording cases needs a completed near-zero step")
     return MarketAssessmentResult.model_validate(raw)
 
 
-def case_reports(ctx: TaskContext) -> list[CaseReport]:
+def case_reports(state: RunState) -> list[CaseReport]:
     """Every flag's report, in list order."""
-    state = ctx.state
-    assessed = _latest_assessment(ctx)
+    assessed = _latest_assessment(state)
     outcomes = validated_drafts(state.execution, state.agent_results, state.validations)
     decisions: dict[str, list[ItemDecision]] = {}
     for v in state.validations:
@@ -243,7 +252,7 @@ def case_reports(ctx: TaskContext) -> list[CaseReport]:
 
 
 async def record_cases(ctx: TaskContext) -> RecordCasesResult:
-    reports = case_reports(ctx)
+    reports = case_reports(ctx.state)
     lines = []
     for report in reports:
         payload: dict[str, JsonValue] = report.model_dump(mode="json")
@@ -270,19 +279,18 @@ async def record_cases(ctx: TaskContext) -> RecordCasesResult:
         cases_existing=len(lines) - created,
         verdicts={v: verdicts.get(v, 0) for v in Verdict},
         not_validated=sum(1 for r in reports if not r.validated),
-        report=run_report(ctx, reports, created, len(lines) - created),
+        report=run_report(ctx.state, reports, created, len(lines) - created),
     )
 
 
 def run_report(
-    ctx: TaskContext, reports: list[CaseReport], created: int, existing: int
+    state: RunState, reports: list[CaseReport], created: int, existing: int
 ) -> RunReport:
-    state = ctx.state
-    raw = ctx.result_of(CHECK_FILES_AND_INTAKE)
+    raw = latest_result(state, CHECK_FILES_AND_INTAKE)
     if raw is None:
         raise ValueError("the run report needs a completed intake step")
     intake = IntakeResult.model_validate(raw)
-    assessed = _latest_assessment(ctx)
+    assessed = _latest_assessment(state)
     calls = [c for r in reports for c in r.trail.tool_calls]
     latest = {r.flag_id: r.teacher_decision for r in reports if r.teacher_decision is not None}
     sent_back = {
@@ -296,8 +304,8 @@ def run_report(
     decisions = Counter(latest.values())
     files = intake.completeness
     return RunReport(
-        business_date=ctx.inputs.business_date.isoformat(),
-        data_type=ctx.inputs.data_type,
+        business_date=state.business_date.isoformat(),
+        data_type=state.data_type,
         files_expected=files.files_expected,
         files_received=files.files_received,
         files=tuple(

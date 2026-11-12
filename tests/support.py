@@ -76,3 +76,27 @@ def accept_all(request: LLMRequest) -> dict[str, Any]:
             for f in review_flags(request)
         ]
     }
+
+
+def opinion_inputs(request: LLMRequest) -> dict[str, Any]:
+    """The inputs of a `master_opinion` request."""
+    text = request.user_message.removeprefix("Inputs (JSON):\n").split("\n\n")[0]
+    data: dict[str, Any] = json.loads(text)
+    return data
+
+
+def opinion_from_inputs(request: LLMRequest) -> dict[str, Any]:
+    """A fake `master_opinion` reply: the likely real flags first, then the artifacts,
+    quoting their own measures. Always grounded."""
+    flags = opinion_inputs(request)["flags"]
+    first = [f for f in flags if f["verdict"] == "likely_real"]
+    artifacts = [f for f in flags if f["label"] == "threshold_artifact" and "evidence" in f]
+    lines = [f"Review {f['item']} first: it moved {f['change']:+.2f} bps." for f in first]
+    lines += [f"{f['item']} is a near-zero threshold artifact." for f in artifacts]
+    cited = [f["evidence"][0]["id"] for f in (*first, *artifacts) if "evidence" in f]
+    return {
+        "summary": " ".join(lines) or "Nothing stands out.",
+        "review_first": [f["flag_id"] for f in first],
+        "uncertainties": [],
+        "evidence_ids": cited,
+    }

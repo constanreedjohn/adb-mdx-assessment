@@ -18,6 +18,7 @@ from mcp.server.mcpserver import MCPServer
 
 from mdx_assessment.core.platform import PlatformRegistries
 from mdx_assessment.core.tools.registry import ToolContext
+from mdx_assessment.usecases.mdx.agents.opinion import opinion_material
 from mdx_assessment.usecases.mdx.agents.skeleton import register_skeleton
 from mdx_assessment.usecases.mdx.config import (
     DATA_TYPES_PATH,
@@ -61,4 +62,5 @@ def register(registries: PlatformRegistries) -> None:
     registries.config.register(NEAR_ZERO_PATH, NearZeroSettings, owner=USE_CASE_ID)
     registries.config.register(INVESTIGATION_PATH, InvestigationSettings, owner=USE_CASE_ID)
     registries.facts = build_mdx_facts
+    registries.opinion = opinion_material
     register_skeleton(registries)

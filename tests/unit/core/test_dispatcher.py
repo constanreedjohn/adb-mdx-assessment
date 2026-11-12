@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel
 
 from mdx_assessment.core.domain import (
     DecisionKind,
@@ -16,6 +16,7 @@ from mdx_assessment.core.domain import (
     PlanStep,
     ReviewCheckResult,
     RunContext,
+    RunOpinion,
     SessionStatus,
     TaskStatus,
 )
@@ -226,8 +227,8 @@ async def test_hooks_fill_the_state() -> None:
     async def playbook(state: RunState) -> ResolvedPlaybook | None:
         return PLAYBOOK
 
-    async def opinion(state: RunState) -> dict[str, JsonValue] | None:
-        return {"summary": f"{len(state.execution)} steps"}
+    async def opinion(state: RunState) -> RunOpinion | None:
+        return RunOpinion(summary=f"{len(state.execution)} steps", source="llm")
 
     final, audit = await run(
         plan_of("toy.produce"),
@@ -235,7 +236,7 @@ async def test_hooks_fill_the_state() -> None:
     )
     assert final.run_context.fact("flag_count") == fact
     assert final.playbook == PLAYBOOK
-    assert final.run_opinion == {"summary": "1 steps"}
+    assert final.run_opinion is not None and final.run_opinion.summary == "1 steps"
     events = [e.event_type for e in audit.read()]
     assert events[:3] == ["run_context", "playbook_selected", "plan"]
 
@@ -295,3 +296,16 @@ def test_catalogue_is_data() -> None:
         "agent": "toy_agent",
         "description": "toy.produce",
     }
+
+
+async def test_an_opinion_that_crashes_does_not_fail_the_run(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def broken(state: RunState) -> RunOpinion | None:
+        raise RuntimeError("opinion builder bug")
+
+    with caplog.at_level(logging.ERROR, logger="mdx_assessment.core.orchestration.graph"):
+        final, _ = await run(plan_of("toy.produce"), {"synthesize": broken})
+    assert final.status is SessionStatus.SUCCEEDED
+    assert (final.run_opinion, final.fallbacks) == (None, ["opinion_failed"])
+    assert "the run opinion could not be written" in caplog.text

@@ -10,7 +10,13 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.memory import InMemorySaver
-from tests.support import CapturedTraces, accept_all, explain_from_inputs, investigate_from_inputs
+from tests.support import (
+    CapturedTraces,
+    accept_all,
+    explain_from_inputs,
+    investigate_from_inputs,
+    opinion_from_inputs,
+)
 
 from mdx_assessment.app import build_registries, load_config
 from mdx_assessment.core.api import create_app
@@ -75,8 +81,13 @@ def valid_plan(config: LoadedConfig) -> dict[str, Any]:
 
 
 def client_for(
-    config: LoadedConfig, settings: Settings, script: Any, tracer: Tracer | None = None
+    config: LoadedConfig,
+    settings: Settings,
+    script: Any,
+    tracer: Tracer | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> TestClient:
+    """`extra` replaces or adds scripted replies by prompt ID."""
     audit = InMemoryAuditTrail()
 
     def make_gateway(trail: AuditTrail, active: Tracer) -> LLMGateway:
@@ -88,6 +99,8 @@ def client_for(
                 "mda_explain": explain_from_inputs,
                 "mda_investigate": investigate_from_inputs,
                 "master_validate": accept_all,
+                "master_opinion": opinion_from_inputs,
+                **(extra or {}),
             }
         )
         return create_llm_gateway(trail, active, settings, fake)
@@ -137,6 +150,7 @@ def test_post_then_get_on_the_simulated_day(client: TestClient, config: LoadedCo
         "prompts": {
             "master_plan": "v1",
             "master_review": "v1",
+            "master_opinion": "v1",
             "mda_explain": "v1",
             "mda_investigate": "v1",
             "master_validate": "v1",
@@ -180,6 +194,7 @@ class ClosingProvider(FakeProvider):
                 "mda_explain": explain_from_inputs,
                 "mda_investigate": investigate_from_inputs,
                 "master_validate": accept_all,
+                "master_opinion": opinion_from_inputs,
             }
         )
         self.closed = False

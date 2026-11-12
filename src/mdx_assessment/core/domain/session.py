@@ -21,6 +21,7 @@ from mdx_assessment.core.domain.planning import Plan, PlanSource, Task, TaskStat
 from mdx_assessment.core.domain.review import (
     Decision,
     ReviewCheckResult,
+    RunOpinion,
     RunReview,
     StepValidation,
 )
@@ -73,7 +74,7 @@ class SessionResult(DomainModel):
     validations: tuple[StepValidation, ...] = ()
     """The Master's per-item review of each step that has one (E10-05)."""
     findings: tuple[Finding, ...] = ()
-    run_opinion: dict[str, JsonValue] | None = None
+    run_opinion: RunOpinion | None = None
     review: RunReview | None = None
     fallbacks: tuple[str, ...] = ()
     analyst_notice: str | None = None

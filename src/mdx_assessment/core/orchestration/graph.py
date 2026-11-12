@@ -60,6 +60,7 @@ from mdx_assessment.core.domain import (
     Reliability,
     ReviewCheckResult,
     RunContext,
+    RunOpinion,
     RunReview,
     SessionStatus,
     TaskStatus,
@@ -116,7 +117,7 @@ ContextHook = Callable[[RunState], Awaitable[RunContext]]
 PlaybookHook = Callable[[RunState], Awaitable[ResolvedPlaybook | None]]
 PlanHook = Callable[[RunState], Awaitable[Plan]]
 DecideHook = Callable[[RunState, ExecutionEntry, list[ReviewCheckResult]], Awaitable[Decision]]
-SynthesizeHook = Callable[[RunState], Awaitable[dict[str, JsonValue] | None]]
+SynthesizeHook = Callable[[RunState], Awaitable[RunOpinion | None]]
 
 
 class Node(Protocol):
@@ -232,7 +233,7 @@ def run_review(state: RunState) -> RunReview:
     )
 
 
-async def _no_opinion(state: RunState) -> dict[str, JsonValue] | None:
+async def _no_opinion(state: RunState) -> RunOpinion | None:
     return None
 
 
@@ -553,10 +554,37 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
             e.step_id for e in state.execution if e.status is TaskStatus.DONE_WITH_FALLBACK
         ]
         review = run_review(state)
-        update: dict[str, Any] = {"run_opinion": await hooks.synthesize(state), "review": review}
+        try:
+            opinion = await hooks.synthesize(state)
+        except Exception:  # the run's work is done: a missing opinion mustn't undo it
+            logger.exception("session %s: the run opinion could not be written", state.session_id)
+            opinion = None
+            opinion_fallbacks = ["opinion_failed"]
+        else:
+            opinion_fallbacks = []
+        update: dict[str, Any] = {"run_opinion": opinion, "review": review}
+        if opinion is not None:
+            await runtime.record(
+                state,
+                MASTER_AGENT,
+                "run_opinion",
+                {
+                    "source": opinion.source,
+                    "review_first": list(opinion.review_first),
+                    "evidence_ids": list(opinion.evidence_ids),
+                    **(
+                        {"fallback_reason": opinion.fallback_reason}
+                        if opinion.fallback_reason
+                        else {}
+                    ),
+                },
+            )
         fallbacks = [f"step_failed:{s}" for s in failed]
         fallbacks += [f"step_skipped:{s}" for s in skipped]
         fallbacks += [f"step_template:{s}" for s in templated]
+        if opinion is not None and opinion.source == "template_fallback" and state.llm_enabled:
+            fallbacks.append(f"opinion_template:{opinion.fallback_reason}")
+        fallbacks += opinion_fallbacks
         if fallbacks:
             update["fallbacks"] = fallbacks
         # The run reached its end, so it succeeded (team ADR-0001); how well it went is

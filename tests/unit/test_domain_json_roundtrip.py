@@ -35,6 +35,7 @@ from mdx_assessment.core.domain import (
     ReviewCheckResult,
     RunContext,
     RunObservation,
+    RunOpinion,
     RunReview,
     SessionResult,
     SessionStatus,
@@ -147,6 +148,14 @@ STEP_VALIDATION = StepValidation(
 )
 
 SAMPLES: list[BaseModel] = [
+    RunOpinion(
+        summary="Review GBP 2Y first: +18 bps. JPY 3M's +75% is a near-zero artifact.",
+        review_first=("20261015-GBP-2Y",),
+        uncertainties=("1 flag not validated",),
+        evidence_ids=("ev-" + "a" * 16,),
+        source="template_fallback",
+        fallback_reason="llm_off",
+    ),
     STEP_VALIDATION,
     STEP_VALIDATION.decisions[1],
     RunReview(

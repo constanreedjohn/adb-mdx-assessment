@@ -123,6 +123,8 @@ def test_allow_list_is_derived_from_the_state() -> None:
         "StepValidation",
         "ItemDecision",
         "ItemDecisionKind",
+        # E10-02: the run opinion
+        "RunOpinion",
     }
 
 

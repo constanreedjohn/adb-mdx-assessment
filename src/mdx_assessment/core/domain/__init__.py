@@ -27,6 +27,7 @@ from mdx_assessment.core.domain.review import (
     ItemDecisionKind,
     Reliability,
     ReviewCheckResult,
+    RunOpinion,
     RunReview,
     StepValidation,
 )
@@ -57,6 +58,7 @@ __all__ = [
     "ReviewCheckResult",
     "RunContext",
     "RunObservation",
+    "RunOpinion",
     "RunReview",
     "SessionResult",
     "SessionStatus",

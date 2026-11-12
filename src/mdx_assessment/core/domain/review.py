@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import model_validator
 
@@ -84,6 +84,21 @@ class StepValidation(DomainModel):
     summary: str
     decisions: tuple[ItemDecision, ...] = ()
     llm_attempts: int = 0
+
+
+class RunOpinion(DomainModel):
+    """The Master Agent's summary of the run for the analyst (E10-02). Advisory."""
+
+    summary: NonEmptyStr
+    review_first: tuple[str, ...] = ()
+    """Item IDs to look at first, in order."""
+    uncertainties: tuple[str, ...] = ()
+    """What the analyst shouldn't take for granted."""
+    evidence_ids: tuple[str, ...] = ()
+    source: Literal["llm", "template_fallback"]
+    fallback_reason: str | None = None
+    """Why code wrote it: the LLM was off, unreachable, or its output unusable twice."""
+    attempts: int = 0
 
 
 class Reliability(StrEnum):

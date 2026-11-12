@@ -9,7 +9,12 @@ import pytest
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from sqlalchemy import URL, Engine, text
-from tests.support import accept_all, explain_from_inputs, investigate_from_inputs
+from tests.support import (
+    accept_all,
+    explain_from_inputs,
+    investigate_from_inputs,
+    opinion_from_inputs,
+)
 
 from mdx_assessment.app import build_registries, load_config
 from mdx_assessment.core.api import create_app
@@ -67,6 +72,7 @@ def test_a_session_survives_in_postgres(
                     "mda_explain": explain_from_inputs,
                     "mda_investigate": investigate_from_inputs,
                     "master_validate": accept_all,
+                    "master_opinion": opinion_from_inputs,
                 }
             ),
         )

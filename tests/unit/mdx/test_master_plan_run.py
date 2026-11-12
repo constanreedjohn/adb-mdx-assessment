@@ -7,7 +7,12 @@ from typing import Any
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
-from tests.support import accept_all, explain_from_inputs, investigate_from_inputs
+from tests.support import (
+    accept_all,
+    explain_from_inputs,
+    investigate_from_inputs,
+    opinion_from_inputs,
+)
 
 from mdx_assessment.app import build_registries, load_config
 from mdx_assessment.core.config import LoadedConfig, load_prompt
@@ -110,6 +115,7 @@ async def test_the_master_plans_the_simulated_day(config: LoadedConfig, data_dir
             "mda_explain": explain_from_inputs,
             "mda_investigate": investigate_from_inputs,
             "master_validate": accept_all,
+            "master_opinion": opinion_from_inputs,
         }
     )
     final = await run_session(config, data_dir, audit, fake)
@@ -141,6 +147,7 @@ async def test_a_rejected_plan_still_runs_the_day_on_the_default(
             "mda_explain": explain_from_inputs,
             "mda_investigate": investigate_from_inputs,
             "master_validate": accept_all,
+            "master_opinion": opinion_from_inputs,
         }
     )
     final = await run_session(config, data_dir, InMemoryAuditTrail(), fake)

@@ -5,7 +5,7 @@ Agents hand work to each other through this state; the dispatcher (E6-02) moves 
 checkpointed to PostgreSQL after every step, so an interrupted session resumes where
 it stopped without repeating a step.
 
-`run_opinion` is typed loosely until its story lands (E10-02). Use-case results live
+Use-case results live
 in `agent_results` as JSON, so core never needs a pack's types.
 
 List fields use an "append" reducer: a node returns only its new items, and LangGraph
@@ -27,6 +27,7 @@ from mdx_assessment.core.domain import (
     PlanStep,
     ReviewCheckResult,
     RunContext,
+    RunOpinion,
     RunReview,
     SessionStatus,
     StepValidation,
@@ -93,8 +94,8 @@ class RunState(BaseModel):
     decisions: Annotated[list[Decision], operator.add] = Field(default_factory=list)
     validations: Annotated[list[StepValidation], operator.add] = Field(default_factory=list)
     """The Master's per-item review of each step whose task has a validator (E10-05)."""
-    run_opinion: dict[str, JsonValue] | None = None
-    """The Master Agent's run opinion (typed in E10-02)."""
+    run_opinion: RunOpinion | None = None
+    """The Master Agent's run opinion (E10-02)."""
     review: RunReview | None = None
     """The run's reliability and what needs a human, set at the end (E10-01)."""
 

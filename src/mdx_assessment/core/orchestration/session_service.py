@@ -30,6 +30,9 @@ from mdx_assessment.core.domain import (
 )
 from mdx_assessment.core.gateway import LLMGateway, create_llm_gateway
 from mdx_assessment.core.gateway.grounding import GUARDRAILS_PATH, GuardrailsConfig
+from mdx_assessment.core.master.opinion import PROMPT_ID as OPINION_PROMPT_ID
+from mdx_assessment.core.master.opinion import PROMPT_VERSION as OPINION_PROMPT_VERSION
+from mdx_assessment.core.master.opinion import master_opinion_hook
 from mdx_assessment.core.master.planning import PROMPT_ID, PROMPT_VERSION, master_plan_hook
 from mdx_assessment.core.master.review import PROMPT_ID as REVIEW_PROMPT_ID
 from mdx_assessment.core.master.review import PROMPT_VERSION as REVIEW_PROMPT_VERSION
@@ -96,7 +99,11 @@ class SessionService:
         """Run a session to its end (synchronously for now) and return the stored result."""
         session_id = f"sess-{uuid.uuid4().hex[:12]}"
         started_at = datetime.now(UTC)
-        prompts = {PROMPT_ID: PROMPT_VERSION, REVIEW_PROMPT_ID: REVIEW_PROMPT_VERSION}
+        prompts = {
+            PROMPT_ID: PROMPT_VERSION,
+            REVIEW_PROMPT_ID: REVIEW_PROMPT_VERSION,
+            OPINION_PROMPT_ID: OPINION_PROMPT_VERSION,
+        }
         prompts.update(p for task in self._registries.tasks for p in task.prompts)
         versions = Versions(config=self._config.version, prompts=prompts)
         initial = RunState(
@@ -198,6 +205,7 @@ class SessionService:
                 decide=master_review_hook(runtime, tolerance),
                 gather_context=context_hook(registries.facts, hub, self._config),
                 select_playbook=playbook_hook(PlaybookStore.from_config(self._config)),
+                synthesize=master_opinion_hook(runtime, registries.opinion),
             )
             app = build_session_graph(runtime, hooks).compile(checkpointer=checkpointer)
             output = await app.ainvoke(

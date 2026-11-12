@@ -7,6 +7,7 @@ Lives at `core.platform` (not in `core.registry`) because it pulls in many subsy
 - `tools`: MCP tool servers and their operations (E3-03)
 - `agents`, `tasks`, `checks`: agents, the tasks they run, and review checks (E6-02)
 - `facts`: the pack's run-context facts builder (E6-03)
+- `opinion`: what the pack gives the Master to write the run opinion from (E10-02)
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from dataclasses import dataclass, field
 
 from mdx_assessment.core.config import ConfigSchemaRegistry
 from mdx_assessment.core.gateway.grounding import GUARDRAILS_PATH, GuardrailsConfig
+from mdx_assessment.core.master.opinion import OpinionBuilder
 from mdx_assessment.core.orchestration.graph import MASTER_AGENT
 from mdx_assessment.core.orchestration.playbooks import PLAYBOOKS_PATTERN, PlaybookDocument
 from mdx_assessment.core.orchestration.run_context import FactsBuilder
@@ -40,6 +42,8 @@ class PlatformRegistries:
     checks: ReviewCheckRegistry = field(default_factory=ReviewCheckRegistry)
     facts: FactsBuilder | None = None
     """The pack's run-context facts (one use case per deployment for now, plan §2.7)."""
+    opinion: OpinionBuilder | None = None
+    """The pack's material for the Master's run opinion (E10-02)."""
 
     def problems(self, permissions: PermissionMatrix) -> list[str]:
         """Inconsistencies between the registries and the permission matrix."""
