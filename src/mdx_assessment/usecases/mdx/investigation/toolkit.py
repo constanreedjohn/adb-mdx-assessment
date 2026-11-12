@@ -27,6 +27,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
 from mdx_assessment.core.domain import Evidence
+from mdx_assessment.core.observability.tracing import Tracer
 from mdx_assessment.usecases.mdx.checks.normalize import NormalizedFlag
 from mdx_assessment.usecases.mdx.config import DataTypeProfile, InvestigationSettings
 from mdx_assessment.usecases.mdx.domain import DataType, MarketDataKind, Series
@@ -121,9 +122,12 @@ class Investigation:
         data_type: DataType,
         settings: InvestigationSettings,
         history_days: int,
+        tracer: Tracer | None = None,
     ) -> None:
         """`history_days`: how many business days the step's crucial reads fetch for each
-        point (the near-zero window plus today), so tools reuse them."""
+        point (the near-zero window plus today), so tools reuse them. Each run is a span
+        in the session's trace when `tracer` is given (E4-04)."""
+        self._tracer = tracer or Tracer(None)
         self._reads = reads
         self._flags = {f.flag_id: f for f in flags}
         self._profiles = profiles
@@ -133,6 +137,20 @@ class Investigation:
         self._history_days = max(history_days, settings.flag_frequency_window_days + 1)
 
     async def run(self, tool_id: str, arguments: Mapping[str, JsonValue]) -> Evidence:
+        with self._tracer.span(
+            f"{SOURCE_PREFIX}.{tool_id}", kind="tool", input=dict(arguments)
+        ) as span:
+            try:
+                evidence = await self._run(tool_id, arguments)
+            except Exception as exc:
+                if span is not None:
+                    span.update(error=f"{type(exc).__name__}: {exc}"[:500])
+                raise
+            if span is not None:
+                span.update(output={"evidence_id": evidence.evidence_id, **evidence.data})
+            return evidence
+
+    async def _run(self, tool_id: str, arguments: Mapping[str, JsonValue]) -> Evidence:
         tool = _BY_ID.get(tool_id)
         if tool is None:
             raise InvestigationError(f"unknown tool {tool_id!r}; choose one of {sorted(_BY_ID)}")

@@ -23,6 +23,7 @@ from pydantic import BaseModel, JsonValue
 from mdx_assessment.core.config import LoadedConfig
 from mdx_assessment.core.domain import PlanStep, ReviewCheckResult, StepValidation
 from mdx_assessment.core.gateway.gateway import LLMGateway
+from mdx_assessment.core.observability.tracing import Tracer
 from mdx_assessment.core.orchestration.state import ExecutionEntry, RunState
 from mdx_assessment.core.tools.client import AgentToolClient, TaskBudget
 
@@ -46,6 +47,8 @@ class TaskContext:
     tools_client: AgentToolClient | None
     gateway: LLMGateway | None
     loaded_config: LoadedConfig | None = None
+    tracer: Tracer = field(default_factory=lambda: Tracer(None))
+    """The session's tracer, for spans of work that isn't a tool or model call (E4-04)."""
 
     @property
     def config(self) -> LoadedConfig:
@@ -104,6 +107,7 @@ class ValidationContext:
     loaded_config: LoadedConfig | None
     send_back_refusal: Callable[[PlanStep], str | None]
     """Why a send-back with this step would be refused (P-2, P-3), or None if it can run."""
+    tracer: Tracer = field(default_factory=lambda: Tracer(None))
 
     @property
     def config(self) -> LoadedConfig:

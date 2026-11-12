@@ -20,6 +20,10 @@ from mdx_assessment.settings import Settings
 from mdx_assessment.usecases.mdx.agents.opinion import opinion_material
 
 pytestmark = pytest.mark.anyio
+COUNTS = (
+    "28 flags assessed: 1 likely real, 0 can't tell, 27 likely harmless "
+    "(4 near-zero threshold artifacts, 23 ordinary moves)."
+)
 
 
 @pytest.fixture
@@ -67,7 +71,8 @@ def test_the_opinion_names_gbp_first_and_jpy_as_an_artifact_with_citations(
         ("near_zero_measures", GBP_2Y),
         ("near_zero_measures", JPY_3M),
     }
-    assert session["versions"]["prompts"]["master_opinion"] == "v1"
+    assert session["versions"]["prompts"]["master_opinion"] == "v2"
+    assert opinion["counts"] == COUNTS
     assert "opinion_template" not in " ".join(session["fallbacks"])
 
 
@@ -99,8 +104,9 @@ def test_with_the_llm_off_code_writes_the_opinion(
     summary = opinion["summary"]
     assert "Review first: GBP 2Y (+18.00 bps, z +4.80, likely real)." in summary
     assert "JPY 3M (MDX +75.0%, actually +3.00 bps)" in summary
-    assert "The other 23 flags are ordinary moves for their curves." in summary
-    assert "28 verdicts were not validated by the Master." in opinion["uncertainties"]
+    assert "The other flags are ordinary moves for their curves." in summary
+    assert "Some verdicts were not validated by the Master." in opinion["uncertainties"]
+    assert opinion["counts"] == COUNTS + " 28 not validated by the Master."
 
 
 async def test_the_template_is_grounded_and_lists_cant_tell_flags(data_dir: Path) -> None:  # noqa: F811
@@ -138,8 +144,39 @@ def edited(edit: Any, seen: list[str]) -> Any:
             "does not match",
         ),
         (lambda r: {**r, "evidence_ids": ["ev-0000000000000000"]}, "does not exist"),
+        # v2, from the first live run:
+        (
+            lambda r: {**r, "summary": r["summary"] + " The other 27 flags are ordinary."},
+            "does not match",
+        ),
+        (
+            lambda r: {**r, "evidence_ids": r["evidence_ids"][:1]},
+            "JPY 3M is named but its evidence isn't cited",
+        ),
+        (
+            lambda r: {**r, "summary": r["summary"] + " EUR 3M moved a little."},
+            "EUR 3M has no evidence to cite",
+        ),
+        (
+            lambda r: {**r, "summary": r["summary"] + " Analysts should focus on GBP 2Y."},
+            "gives the analyst advice",
+        ),
+        (
+            lambda r: {**r, "uncertainties": ["You need to check the CHF curve."]},
+            "'need to' gives the analyst advice",
+        ),
     ],
-    ids=["drops-the-large-move", "invents-an-item", "invents-a-number", "cites-nothing-real"],
+    ids=[
+        "drops-the-large-move",
+        "invents-an-item",
+        "invents-a-number",
+        "cites-nothing-real",
+        "quotes-a-count",
+        "names-a-flag-uncited",
+        "names-a-flag-without-evidence",
+        "advises-in-the-summary",
+        "advises-in-the-uncertainties",
+    ],
 )
 def test_an_opinion_that_breaks_a_guardrail_is_retried(
     config: LoadedConfig,  # noqa: F811

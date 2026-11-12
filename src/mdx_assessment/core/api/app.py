@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from mdx_assessment.core.api.cases import create_cases_router
+from mdx_assessment.core.api.evaluation import create_eval_router
 from mdx_assessment.core.api.sessions import create_sessions_router
 from mdx_assessment.core.meta import DIST_NAME, app_version
 from mdx_assessment.core.observability.log_file import Lifespan
@@ -52,6 +53,7 @@ def create_app(
     def get_version() -> VersionResponse:
         return VersionResponse(app=DIST_NAME, version=app_version(), config_version=config_version)
 
+    app.include_router(create_eval_router())
     if sessions is not None:
         app.include_router(create_sessions_router(sessions))
         app.include_router(create_cases_router(sessions))

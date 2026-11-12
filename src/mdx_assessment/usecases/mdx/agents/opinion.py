@@ -21,7 +21,7 @@ from mdx_assessment.core.config import LoadedConfig
 from mdx_assessment.core.domain import Evidence, ItemDecisionKind
 from mdx_assessment.core.gateway import EvidenceBundle, EvidenceItem
 from mdx_assessment.core.gateway import Unit as GroundingUnit
-from mdx_assessment.core.gateway.grounding import GUARDRAILS_PATH, GuardrailsConfig, quantities_in
+from mdx_assessment.core.gateway.grounding import GUARDRAILS_PATH, GuardrailsConfig
 from mdx_assessment.core.master.opinion import OpinionMaterial, OpinionOutput
 from mdx_assessment.core.orchestration.state import RunState
 from mdx_assessment.usecases.mdx.agents.escalation import (
@@ -89,9 +89,31 @@ def _line(r: CaseReport, measures: Evidence | None) -> str:
     return f"{r.item} ({detail}, {_WORDS[r.verdict]})"
 
 
+def _counts(reports: list[CaseReport], figures: RunReport) -> str:
+    """The day's counts, by code: the opinion's text doesn't state them."""
+    verdicts = figures.verdicts
+    harmless = verdicts[Verdict.LIKELY_HARMLESS]
+    artifacts = figures.threshold_artifacts
+    line = (
+        f"{figures.flags_assessed} flags assessed: {verdicts[Verdict.LIKELY_REAL]} likely real, "
+        f"{verdicts[Verdict.CANT_TELL]} can't tell, {harmless} likely harmless "
+        f"({artifacts} near-zero threshold artifacts, {harmless - artifacts} ordinary moves)."
+    )
+    not_validated = sum(1 for r in reports if not r.validated)
+    unresolved = sum(1 for r in reports if r.teacher_decision is ItemDecisionKind.UNRESOLVED)
+    extra = [f"{not_validated} not validated by the Master"] if not_validated else []
+    extra += [f"{unresolved} unresolved after the Master's review"] if unresolved else []
+    if not extra:
+        return line
+    rest = "; ".join(extra)
+    return f"{line} {rest[0].upper()}{rest[1:]}."
+
+
 def _template(
     reports: list[CaseReport], figures: RunReport, records: dict[str, Evidence]
 ) -> OpinionOutput:
+    """Code's opinion. Like the Master's, it states no counts (`_counts` does) and names
+    only flags whose measures it cites."""
     measures = {r.flag_id: _measures_of(r, records) for r in reports}
     first = [r for r in reports if r.verdict is Verdict.LIKELY_REAL]
     unsure = [r for r in reports if r.verdict is Verdict.CANT_TELL]
@@ -103,13 +125,13 @@ def _template(
     ]
     ordinary = figures.flags_assessed - len(first) - len(unsure) - len(artifacts)
 
-    parts = [f"{figures.flags_assessed} flags assessed on {figures.business_date}."]
+    parts = []
     if first:
         parts.append(
             "Review first: " + "; ".join(_line(r, measures[r.flag_id]) for r in first) + "."
         )
     else:
-        parts.append("No flag needs to be reviewed first.")
+        parts.append("No flag stands out to be reviewed first.")
     if unsure:
         parts.append(
             "Can't tell, to review: "
@@ -124,23 +146,19 @@ def _template(
             for r in artifacts
         )
         parts.append(
-            f"{len(artifacts)} near-zero threshold artifacts, likely harmless: MDX's percentage "
-            f"overstates a small move: {hidden}."
+            "Near-zero threshold artifacts, likely harmless: MDX's percentage overstates a "
+            f"small move: {hidden}."
         )
     if ordinary > 0:
-        parts.append(f"The other {ordinary} flags are ordinary moves for their curves.")
+        parts.append("The other flags are ordinary moves for their curves.")
 
     uncertainties = [f"{r.item}: can't tell. {r.report.text}" for r in unsure]
-    not_validated = sum(1 for r in reports if not r.validated)
-    if not_validated:
-        uncertainties.append(f"{not_validated} verdicts were not validated by the Master.")
-    unresolved = sum(1 for r in reports if r.teacher_decision is ItemDecisionKind.UNRESOLVED)
-    if unresolved:
-        uncertainties.append(f"{unresolved} drafts ended unresolved after the Master's review.")
+    if any(not r.validated for r in reports):
+        uncertainties.append("Some verdicts were not validated by the Master.")
+    if any(r.teacher_decision is ItemDecisionKind.UNRESOLVED for r in reports):
+        uncertainties.append("Some drafts ended unresolved after the Master's review.")
     if figures.templates["reports"]:
-        uncertainties.append(
-            f"{figures.templates['reports']} reports were written by code, not the AI model."
-        )
+        uncertainties.append("Some reports were written by code, not the AI model.")
 
     cited = [m.evidence_id for r in (*first, *unsure, *artifacts) if (m := measures[r.flag_id])]
     return OpinionOutput(
@@ -166,6 +184,7 @@ def opinion_material(state: RunState, config: LoadedConfig) -> OpinionMaterial |
 
     flags: list[JsonValue] = []
     citable: list[EvidenceItem] = []
+    named: dict[str, tuple[str, ...]] = {}
     for r in reports:
         row: dict[str, JsonValue] = {
             "flag_id": r.flag_id,
@@ -180,7 +199,9 @@ def opinion_material(state: RunState, config: LoadedConfig) -> OpinionMaterial |
             "unit": r.unit,
         }
         measures = _measures_of(r, records)
+        named[r.item] = ()
         if _notable(r) and measures is not None:
+            named[r.item] = (measures.evidence_id,)
             units = measure_units(intake.profiles[kinds[r.flag_id]])
             grounding = {k: _GROUNDING[u] for k, u in units.items() if u in _GROUNDING}
             row["mdx_shows_pct"] = r.mdx_shows
@@ -193,10 +214,14 @@ def opinion_material(state: RunState, config: LoadedConfig) -> OpinionMaterial |
 
     figures_json: dict[str, JsonValue] = figures.model_dump(mode="json")
     tolerance = config.get(GUARDRAILS_PATH, GuardrailsConfig).number_matching
+    counts = _counts(reports, figures)
     return OpinionMaterial(
-        inputs={"figures": figures_json, "flags": flags},
-        bundle=EvidenceBundle.of(citable, context=quantities_in(figures_json), tolerance=tolerance),
+        inputs={"figures": figures_json, "counts": counts, "flags": flags},
+        # Only the cited measures are quotable: the counts are code's (`counts`).
+        bundle=EvidenceBundle.of(citable, tolerance=tolerance),
         known_items=frozenset(r.flag_id for r in reports),
+        named_items=named,
+        counts=counts,
         must_review=tuple(r.flag_id for r in reports if r.verdict is Verdict.LIKELY_REAL),
         template=_template(reports, figures, records),
     )

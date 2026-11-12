@@ -8,11 +8,15 @@ Lives at `core.platform` (not in `core.registry`) because it pulls in many subsy
 - `agents`, `tasks`, `checks`: agents, the tasks they run, and review checks (E6-02)
 - `facts`: the pack's run-context facts builder (E6-03)
 - `opinion`: what the pack gives the Master to write the run opinion from (E10-02)
+- `session_view`: the pack's `agents` and `flags` in the session response (E12-02)
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+
+from pydantic import JsonValue
 
 from mdx_assessment.core.config import ConfigSchemaRegistry
 from mdx_assessment.core.gateway.grounding import GUARDRAILS_PATH, GuardrailsConfig
@@ -20,6 +24,7 @@ from mdx_assessment.core.master.opinion import OpinionBuilder
 from mdx_assessment.core.orchestration.graph import MASTER_AGENT
 from mdx_assessment.core.orchestration.playbooks import PLAYBOOKS_PATTERN, PlaybookDocument
 from mdx_assessment.core.orchestration.run_context import FactsBuilder
+from mdx_assessment.core.orchestration.state import RunState
 from mdx_assessment.core.orchestration.tasks import (
     AgentDefinition,
     AgentRegistry,
@@ -33,6 +38,19 @@ from mdx_assessment.core.tools.permissions import PERMISSIONS_PATH, PermissionMa
 from mdx_assessment.core.tools.registry import ToolRegistry
 
 
+@dataclass(frozen=True)
+class SessionView:
+    """How the pack presents a finished run."""
+
+    agents: dict[str, dict[str, JsonValue]]
+    """Per agent ID, its output for the analyst (plan §2.4)."""
+    flags: tuple[dict[str, JsonValue], ...] = ()
+    """The ordered list, one ROI report per item."""
+
+
+SessionViewBuilder = Callable[[RunState], SessionView | None]
+
+
 @dataclass
 class PlatformRegistries:
     config: ConfigSchemaRegistry = field(default_factory=ConfigSchemaRegistry)
@@ -44,6 +62,8 @@ class PlatformRegistries:
     """The pack's run-context facts (one use case per deployment for now, plan §2.7)."""
     opinion: OpinionBuilder | None = None
     """The pack's material for the Master's run opinion (E10-02)."""
+    session_view: SessionViewBuilder | None = None
+    """The pack's view of a finished run for `GET /sessions/{id}` (E12-02)."""
 
     def problems(self, permissions: PermissionMatrix) -> list[str]:
         """Inconsistencies between the registries and the permission matrix."""

@@ -15,16 +15,19 @@ import mdx_assessment.usecases.mdx.domain as mdx_domain
 from mdx_assessment.core.domain import (
     GENESIS_HASH,
     AuditEvent,
+    AuditSummary,
     ChainVerification,
     Decision,
     DecisionKind,
     DecisionSource,
     DomainModel,
     Evidence,
+    ExecutedStep,
     Fact,
     Finding,
     ItemDecision,
     ItemDecisionKind,
+    LlmUsage,
     Measure,
     NewAuditEvent,
     Plan,
@@ -33,6 +36,7 @@ from mdx_assessment.core.domain import (
     PlanValidation,
     Reliability,
     ReviewCheckResult,
+    ReviewPoint,
     RunContext,
     RunObservation,
     RunOpinion,
@@ -199,7 +203,26 @@ SAMPLES: list[BaseModel] = [
         finished_at=T1,
         versions=Versions(config="sha256:abc"),
         plan=PLAN,
-        execution=(TASK,),
+        execution=(
+            ExecutedStep(
+                **TASK.model_dump(),
+                review_point=ReviewPoint(
+                    checks=(CHECK,),
+                    llm_review=False,
+                    decision=DecisionKind.FOLLOW_UP,
+                    source=DecisionSource.LLM_REVIEW,
+                    reason="two drafts need another look",
+                    follow_up="s1_revise",
+                    validation="28 draft(s) reviewed: 27 accept, 1 send back",
+                ),
+            ),
+        ),
+        agents={"input_validation": {"flags_read": 28}},
+        flags=({"rank": 1, "item": "GBP 2Y"},),
+        llm_usage=LlmUsage(
+            calls=5, tokens_in=1000, tokens_out=200, latency_ms=900.5, by_prompt={"master_plan": 1}
+        ),
+        audit=AuditSummary(events=42, chain_valid=True),
         review_checks=(CHECK,),
         decisions=(DECISION,),
         findings=(FINDING,),
@@ -252,6 +275,15 @@ SAMPLES: list[BaseModel] = [
         explanation_source=ExplanationSource.LLM,
         evidence_ids=(EV.evidence_id,),
         created_at=T1,
+    ),
+]
+SESSION = next(m for m in SAMPLES if isinstance(m, SessionResult))
+SAMPLES += [
+    SESSION.execution[0],
+    *(
+        m
+        for m in (SESSION.execution[0].review_point, SESSION.llm_usage, SESSION.audit)
+        if m is not None
     ),
 ]
 

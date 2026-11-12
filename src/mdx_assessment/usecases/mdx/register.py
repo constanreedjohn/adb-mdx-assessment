@@ -20,6 +20,7 @@ from mdx_assessment.core.platform import PlatformRegistries
 from mdx_assessment.core.tools.registry import ToolContext
 from mdx_assessment.usecases.mdx.agents.opinion import opinion_material
 from mdx_assessment.usecases.mdx.agents.skeleton import register_skeleton
+from mdx_assessment.usecases.mdx.agents.view import session_view
 from mdx_assessment.usecases.mdx.config import (
     DATA_TYPES_PATH,
     EXPECTED_FILES_PATH,
@@ -63,4 +64,5 @@ def register(registries: PlatformRegistries) -> None:
     registries.config.register(INVESTIGATION_PATH, InvestigationSettings, owner=USE_CASE_ID)
     registries.facts = build_mdx_facts
     registries.opinion = opinion_material
+    registries.session_view = session_view
     register_skeleton(registries)

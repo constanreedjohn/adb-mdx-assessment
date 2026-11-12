@@ -20,6 +20,8 @@ from mdx_assessment.core.domain.findings import Finding
 from mdx_assessment.core.domain.planning import Plan, PlanSource, Task, TaskStatus
 from mdx_assessment.core.domain.review import (
     Decision,
+    DecisionKind,
+    DecisionSource,
     ReviewCheckResult,
     RunOpinion,
     RunReview,
@@ -50,6 +52,46 @@ class Versions(DomainModel):
     ml_model: str | None = None
 
 
+class ReviewPoint(DomainModel):
+    """What happened at a step's review point (plan §2.4)."""
+
+    checks: tuple[ReviewCheckResult, ...] = ()
+    llm_review: bool
+    """True when the Master's LLM reviewed the step (a check failed, option C)."""
+    decision: DecisionKind
+    source: DecisionSource
+    reason: str
+    follow_up: str | None = None
+    """The step ID of a send-back the decision queued."""
+    validation: str | None = None
+    """The Master's per-item review of the step's output, in one line (E10-05)."""
+
+
+class ExecutedStep(Task):
+    """A step as it ran, with its review point."""
+
+    review_point: ReviewPoint | None = None
+
+
+class LlmUsage(DomainModel):
+    """Every model call the session made, from its audit trail (plan §2.4)."""
+
+    calls: int = Field(ge=0)
+    """Attempts, retries included."""
+    tokens_in: int = Field(ge=0)
+    tokens_out: int = Field(ge=0)
+    latency_ms: float = Field(ge=0)
+    fallbacks: int = Field(default=0, ge=0)
+    """Calls whose output was replaced by a code template."""
+    by_prompt: dict[str, int] = Field(default_factory=dict)
+    """Attempts per prompt ID."""
+
+
+class AuditSummary(DomainModel):
+    events: int = Field(ge=0)
+    chain_valid: bool
+
+
 class TraceRef(DomainModel):
     mlflow_trace_id: str
     url: str | None = None
@@ -67,8 +109,13 @@ class SessionResult(DomainModel):
     run_context: RunContext = Field(default_factory=RunContext)
     playbook: dict[str, JsonValue] | None = None
     plan: Plan | None = None
-    execution: tuple[Task, ...] = ()
+    agents: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
+    """Each agent's output, as the use-case pack presents it (plan §2.4)."""
+    flags: tuple[dict[str, JsonValue], ...] = ()
+    """The ordered list for the analyst: one ROI report per item, as the pack shapes it."""
+    execution: tuple[ExecutedStep, ...] = ()
     agent_results: dict[str, dict[str, JsonValue]] = Field(default_factory=dict)
+    """Each step's raw result, by step ID (beyond §2.4: everything the views are built from)."""
     review_checks: tuple[ReviewCheckResult, ...] = ()
     decisions: tuple[Decision, ...] = ()
     validations: tuple[StepValidation, ...] = ()
@@ -77,8 +124,11 @@ class SessionResult(DomainModel):
     run_opinion: RunOpinion | None = None
     review: RunReview | None = None
     fallbacks: tuple[str, ...] = ()
+    llm_usage: LlmUsage | None = None
     analyst_notice: str | None = None
     trace: TraceRef | None = None
+    audit: AuditSummary | None = None
+    """Filled in when the session is read, so the chain is verified at that moment."""
 
     @model_validator(mode="after")
     def _consistent(self) -> Self:

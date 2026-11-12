@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections import Counter
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import UTC, date, datetime
@@ -22,13 +23,20 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from mdx_assessment.core.config import LoadedConfig
 from mdx_assessment.core.domain import (
+    AuditEvent,
+    AuditSummary,
+    ChainVerification,
+    DecisionSource,
+    ExecutedStep,
+    LlmUsage,
+    ReviewPoint,
     SessionResult,
     SessionStatus,
-    Task,
     TraceRef,
     Versions,
 )
 from mdx_assessment.core.gateway import LLMGateway, create_llm_gateway
+from mdx_assessment.core.gateway.gateway import LLM_CALL_EVENT, LLM_FALLBACK_EVENT
 from mdx_assessment.core.gateway.grounding import GUARDRAILS_PATH, GuardrailsConfig
 from mdx_assessment.core.master.opinion import PROMPT_ID as OPINION_PROMPT_ID
 from mdx_assessment.core.master.opinion import PROMPT_VERSION as OPINION_PROMPT_VERSION
@@ -66,6 +74,23 @@ GatewayFactory = Callable[[AuditTrail, Tracer], LLMGateway]
 
 def _default_gateway(audit: AuditTrail, tracer: Tracer) -> LLMGateway:
     return create_llm_gateway(audit, tracer)
+
+
+def review_point(state: RunState, step_id: str) -> ReviewPoint | None:
+    """A step's review point, from the state's decisions, checks and item reviews."""
+    decision = next((d for d in reversed(state.decisions) if d.step_id == step_id), None)
+    if decision is None:
+        return None
+    validation = next((v for v in reversed(state.validations) if v.step_id == step_id), None)
+    return ReviewPoint(
+        checks=tuple(c for c in state.review_checks if c.step_id == step_id),
+        llm_review=decision.source is DecisionSource.LLM_REVIEW and decision.follow_up is None,
+        decision=decision.kind,
+        source=decision.source,
+        reason=decision.reason,
+        follow_up=decision.follow_up.step_id if decision.follow_up else None,
+        validation=validation.summary if validation else None,
+    )
 
 
 class SessionService:
@@ -164,7 +189,19 @@ class SessionService:
             logger.warning("could not flush traces", exc_info=True)
 
     def get(self, session_id: str) -> SessionResult | None:
-        return self._store.get(session_id)
+        """The session, with its audit chain verified now."""
+        result = self._store.get(session_id)
+        if result is None:
+            return None
+        chain = self._audit.verify(session_id)
+        summary = AuditSummary(events=chain.events_checked, chain_valid=chain.valid)
+        return result.model_copy(update={"audit": summary})
+
+    def audit(self, session_id: str) -> tuple[list[AuditEvent], ChainVerification] | None:
+        """The session's audit events in order, and the verification of their chain."""
+        if self._store.get(session_id) is None:
+            return None
+        return self._audit.read(session_id), self._audit.verify(session_id)
 
     def list_cases(self, session_id: str) -> list[CaseRecord] | None:
         """A session's cases, in the order they were recorded; None if no such session."""
@@ -224,10 +261,26 @@ class SessionService:
             if gateway is not None:
                 await gateway.aclose()
 
-    @staticmethod
-    def _result(state: RunState, started_at: datetime, trace: TraceHandle) -> SessionResult:
+    def _llm_usage(self, session_id: str) -> LlmUsage:
+        events = self._audit.read(session_id)
+        calls = [e.payload for e in events if e.event_type == LLM_CALL_EVENT]
+
+        def total(key: str) -> float:
+            values = (c.get(key) for c in calls)
+            return float(sum(v for v in values if isinstance(v, int | float)))
+
+        return LlmUsage(
+            calls=len(calls),
+            tokens_in=int(total("prompt_tokens")),
+            tokens_out=int(total("completion_tokens")),
+            latency_ms=round(total("latency_ms"), 1),
+            fallbacks=sum(1 for e in events if e.event_type == LLM_FALLBACK_EVENT),
+            by_prompt=dict(sorted(Counter(str(c.get("prompt_id")) for c in calls).items())),
+        )
+
+    def _result(self, state: RunState, started_at: datetime, trace: TraceHandle) -> SessionResult:
         execution = tuple(
-            Task(
+            ExecutedStep(
                 task_id=f"{state.session_id}/{entry.step_id}",
                 session_id=state.session_id,
                 step_id=entry.step_id,
@@ -236,9 +289,11 @@ class SessionService:
                 started_at=entry.started_at,
                 finished_at=entry.finished_at,
                 error=entry.error,
+                review_point=review_point(state, entry.step_id),
             )
             for entry in state.execution
         )
+        view = self._registries.session_view(state) if self._registries.session_view else None
         return SessionResult(
             session_id=state.session_id,
             business_date=state.business_date,
@@ -251,6 +306,8 @@ class SessionService:
             run_context=state.run_context,
             playbook=state.playbook.model_dump(mode="json") if state.playbook else None,
             plan=state.plan,
+            agents=view.agents if view else {},
+            flags=view.flags if view else (),
             execution=execution,
             agent_results=state.agent_results,
             review_checks=tuple(state.review_checks),
@@ -259,6 +316,7 @@ class SessionService:
             run_opinion=state.run_opinion,
             review=state.review,
             fallbacks=tuple(state.fallbacks),
+            llm_usage=self._llm_usage(state.session_id),
             analyst_notice=state.analyst_notice,
             trace=TraceRef(mlflow_trace_id=trace.trace_id, url=trace.url)
             if trace.trace_id

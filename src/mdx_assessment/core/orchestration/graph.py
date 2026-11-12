@@ -388,6 +388,7 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
                 ),
                 gateway=runtime.gateway,
                 loaded_config=runtime.config,
+                tracer=runtime.tracer,
             )
             try:
                 with runtime.tracer.span(
@@ -459,23 +460,37 @@ def build_session_graph(runtime: SessionRuntime, hooks: GraphHooks) -> StateGrap
         decision = await hooks.decide(state, entry, results)
         update: dict[str, Any] = {"review_checks": results}
         if definition is not None and definition.validate is not None and entry.status in RAN:
-            outcome = await definition.validate(
-                ValidationContext(
-                    state=state,
-                    entry=entry,
-                    gateway=runtime.gateway,
-                    loaded_config=runtime.config,
-                    send_back_refusal=lambda step: send_back_refusal(
-                        state,
-                        Decision(
-                            step_id=entry.step_id,
-                            kind=DecisionKind.FOLLOW_UP,
-                            reason="check",
-                            follow_up=step,
+            with runtime.tracer.span(
+                f"validate:{entry.task}", kind="chain", metadata={"step_id": entry.step_id}
+            ) as span:
+                outcome = await definition.validate(
+                    ValidationContext(
+                        state=state,
+                        entry=entry,
+                        gateway=runtime.gateway,
+                        loaded_config=runtime.config,
+                        tracer=runtime.tracer,
+                        send_back_refusal=lambda step: send_back_refusal(
+                            state,
+                            Decision(
+                                step_id=entry.step_id,
+                                kind=DecisionKind.FOLLOW_UP,
+                                reason="check",
+                                follow_up=step,
+                            ),
                         ),
-                    ),
+                    )
                 )
-            )
+                if span is not None:
+                    span.update(
+                        output={
+                            "validated": outcome.validation.validated,
+                            "summary": outcome.validation.summary,
+                            "send_back": outcome.send_back.model_dump(mode="json")
+                            if outcome.send_back
+                            else None,
+                        }
+                    )
             validation = outcome.validation
             await runtime.record(
                 state,

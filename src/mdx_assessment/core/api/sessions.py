@@ -9,7 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
-from mdx_assessment.core.domain import SessionResult, SessionStatus
+from mdx_assessment.core.domain import AuditEvent, ChainVerification, SessionResult, SessionStatus
 from mdx_assessment.core.orchestration.session_service import SessionService
 
 DataType = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$", max_length=32)]
@@ -22,6 +22,15 @@ class StartSessionRequest(BaseModel):
     data_type: DataType
     llm_enabled: bool = True
     """False runs the playbook's default plan with no AI model."""
+
+
+class SessionAudit(BaseModel):
+    session_id: str
+    chain: ChainVerification
+    """The session's events verified now: each hash recomputed, each link to the one before."""
+    count: int
+    events: list[AuditEvent]
+    """In `seq` order."""
 
 
 class StartSessionResponse(BaseModel):
@@ -53,5 +62,14 @@ def create_sessions_router(service: SessionService) -> APIRouter:
         if result is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"session {session_id!r} not found")
         return result
+
+    @router.get("/{session_id}/audit")
+    async def get_session_audit(session_id: str) -> SessionAudit:
+        """The session's audit trail, with its hash chain verified."""
+        found = await asyncio.to_thread(service.audit, session_id)
+        if found is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"session {session_id!r} not found")
+        events, chain = found
+        return SessionAudit(session_id=session_id, chain=chain, count=len(events), events=events)
 
     return router

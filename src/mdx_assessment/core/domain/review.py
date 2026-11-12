@@ -90,6 +90,8 @@ class RunOpinion(DomainModel):
     """The Master Agent's summary of the run for the analyst (E10-02). Advisory."""
 
     summary: NonEmptyStr
+    counts: str = ""
+    """The day's counts, written by code: the summary doesn't state them."""
     review_first: tuple[str, ...] = ()
     """Item IDs to look at first, in order."""
     uncertainties: tuple[str, ...] = ()

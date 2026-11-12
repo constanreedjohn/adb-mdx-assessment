@@ -32,11 +32,21 @@ from mdx_assessment.core.domain.review import (
     StepValidation,
 )
 from mdx_assessment.core.domain.run_context import Fact, RunContext, RunObservation
-from mdx_assessment.core.domain.session import SessionResult, SessionStatus, TraceRef, Versions
+from mdx_assessment.core.domain.session import (
+    AuditSummary,
+    ExecutedStep,
+    LlmUsage,
+    ReviewPoint,
+    SessionResult,
+    SessionStatus,
+    TraceRef,
+    Versions,
+)
 
 __all__ = [
     "GENESIS_HASH",
     "AuditEvent",
+    "AuditSummary",
     "ChainVerification",
     "Decision",
     "DecisionKind",
@@ -44,10 +54,12 @@ __all__ = [
     "DomainModel",
     "Evidence",
     "EvidenceId",
+    "ExecutedStep",
     "Fact",
     "Finding",
     "ItemDecision",
     "ItemDecisionKind",
+    "LlmUsage",
     "Measure",
     "NewAuditEvent",
     "Plan",
@@ -56,6 +68,7 @@ __all__ = [
     "PlanValidation",
     "Reliability",
     "ReviewCheckResult",
+    "ReviewPoint",
     "RunContext",
     "RunObservation",
     "RunOpinion",

@@ -50,7 +50,9 @@ The interactive API docs are at <http://127.0.0.1:8000/docs>.
 | `make logs` | The API's log, live |
 | `log/app-<UTC start time>.log` | The same log, one file per app run. Files survive rebuilds and are not cleaned up automatically |
 | MLflow (`trace_url` from step 3, or <http://127.0.0.1:5001>, experiment `mdx-sessions`, Traces tab) | One trace per session: every graph node, tool call and model call, with model and token usage |
-| `GET /sessions/<session_id>` | Facts, selected playbook, plan and its validation, execution log |
+| `GET /sessions/<session_id>` | The whole run: facts, playbook, plan and its validation, each agent's output (`agents`), the ordered flag list with each flag's ROI report (`flags`), every step with its review point, reliability, the run opinion, LLM usage, the trace and the audit chain check |
+| `GET /cases?session_id=<session_id>` | The session's open cases, in the order to read them |
+| `GET /sessions/<session_id>/audit` | The session's audit trail, with its hash chain verified |
 
 ### Session status
 

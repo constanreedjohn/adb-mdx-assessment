@@ -150,7 +150,7 @@ def test_post_then_get_on_the_simulated_day(client: TestClient, config: LoadedCo
         "prompts": {
             "master_plan": "v1",
             "master_review": "v1",
-            "master_opinion": "v1",
+            "master_opinion": "v2",
             "mda_explain": "v1",
             "mda_investigate": "v1",
             "master_validate": "v1",
